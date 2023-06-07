@@ -14,19 +14,23 @@ foreach $filename (@ARGV) {
    @nn = (1..$nmax);
    for(@nn) {
     #$retval = gettimeofday( ); 
-    system("/opt/cray/pe/pals/1.1.7/bin/mpiexec -n 4 --ppn 1 --depth  sh $filename > tmpoutfile.txt 2>&1");
-    open (TEMFILE, '<', $A_FILE);
+    $tmpname = $filename;
+    $tmpname =~ s/.sh/.log/;
+    system("srun -N 4 -n 4  --ntasks-per-gpu=1  --gpus-per-node=1 --gpu-bind=closest -c 8 --cpu-bind=threads sh $filename > $tmpname 2>&1");
+    open (TEMFILE, '<', $tmpname);
     while (<TEMFILE>) {
         $line = $_;
         chomp ($line);
 
         if ($line =~ /Performance:/) {
                 ($v3, $v4, $v5) = split(' ', $line);
- 		printf("%.6f", -1 * $v4);
         }
    }
    if ($v4 == 0 ) {
         printf("-1");
+   }
+   else {
+	printf("%.6f", -1 * $v4);
    }
    close(TEMFILE);
     #$tt = gettimeofday( );

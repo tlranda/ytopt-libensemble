@@ -9,12 +9,16 @@ let appto=300
 #--- process processexe.pl to change the number of nodes (no change)
 # set the MPI ranks per run
 ./processcp.pl ${nranks}
+# Change exe.pl
+./processexe.pl
 
 # set the MPI ranks partition
 ./processry.pl ${nranks}
 
 # set application timeout
-./plopper.pl plopper.py ${appto}
+echo "Set app timeout"
+sed -i "s/app_timeout = [0-9]*/app_timeout = ${appto}/" plopper.py
+grep "app_timeout = " plopper.py
 
 # find the conda path
 cdpath=$(conda info | grep -i 'base environment')
@@ -25,17 +29,8 @@ cpath="$(echo ${arr[3]})/etc/profile.d/conda.sh"
 cat >batch.job <<EOF
 #!/bin/bash -x
 
-# Name of Conda environment
-export CONDA_ENV_NAME=ytune
-
-# Activate conda environment
-#source /usr/local/miniconda/etc/profile.d/conda.sh
-source $cpath
-export PYTHONNOUSERSITE=1
-conda activate \$CONDA_ENV_NAME
-
 # Launch ytopt
-python -m ytopt.search.ambs --evaluator ray --problem problem.Problem --learner=RF --max-evals=32 > out.txt 2>&1
+python -m ytopt.search.ambs --evaluator subprocess --problem problem.Problem --learner=RF --max-evals=4 #> out.txt 2>&1
 EOF
 #-----This part submits the script you just created--------------
 chmod +x batch.job

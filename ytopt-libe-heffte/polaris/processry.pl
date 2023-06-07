@@ -5,7 +5,7 @@
 # processcp.pl: copy the file processexe.pl to change tne proper number of nodes
 #
 
-print "Use 'problem$ARGV[0].py' as 'problem.py'\n";
-system("cp problem$ARGV[0].py problem.py");
+print "Use 'run_ytopt$ARGV[0].py' as 'run_ytopt.py'\n";
+system("cp run_ytopt$ARGV[0].py run_ytopt.py");
 exit 0;
 
