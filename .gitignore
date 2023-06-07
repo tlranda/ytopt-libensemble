@@ -3,6 +3,7 @@
 *.log
 tmp_files/
 tmpoutfile.txt
+ensemble*/
 
 
 # Python artifacts that do not need to be tracked
