@@ -22,7 +22,8 @@ cs = CS.ConfigurationSpace(seed=1234)
 # arg1  precision
 p0 = CSH.CategoricalHyperparameter(name='p0', choices=["double", "float"], default_value="float")
 # arg2  3D array dimension size
-p1 = CSH.OrdinalHyperparameter(name='p1', sequence=[64,128,256,512,1024], default_value=128)
+p1 = CSH.Constant(name='p1', value=1024)
+#p1 = CSH.OrdinalHyperparameter(name='p1', sequence=[64,128,256,512,1024], default_value=128)
 # arg3  reorder
 p2 = CSH.CategoricalHyperparameter(name='p2', choices=["-no-reorder", "-reorder"," "], default_value=" ")
 # arg4 alltoall
@@ -109,4 +110,5 @@ Problem = TuningProblem(
     )
 Problem.request_machine_identifier = 'polaris-gpu'
 Problem.request_passthrough_nodes = 2
+Problem.request_output_prefix = f"ytopt_{Problem.request_passthrough_nodes}nodes_results/results_{p1.value}"
 

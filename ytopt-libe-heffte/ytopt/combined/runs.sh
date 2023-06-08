@@ -5,6 +5,9 @@
 let nranks=2
 # set the maximum application runtime(s) as timeout baseline for each evaluation
 let appto=300
+# set the application scale to be STATIC
+# scales = 64,128,256,512,1024
+let appscale=1024
 
 # set the MPI ranks per run
 echo "Set number of MPI nodes per run";
@@ -15,12 +18,21 @@ grep ";\ #\ REPLACE" exe.pl | awk '{$1=$1};1' | sed "s/#\ REPLACE//";
 sed -i "s/request_passthrough_nodes\ =\ [0-9]*/request_passthrough_nodes\ =\ ${nranks}/" problem.py;
 grep "request_passthrough_nodes" problem.py | awk '{$1=$1};1';
 echo;
+
 # set application timeout
 echo "Set app timeout";
 # Find the pattern "app timeout = [[:digits:]]" and edit the # digits according to appto
 sed -i "s/app_timeout = [0-9]*/app_timeout = ${appto}/" plopper.py;
 # Show what the plopper.py file reads at the replace point
 grep "app_timeout = " plopper.py | awk '{$1=$1};1';
+echo;
+
+# set application static scale
+echo "Set app scale (static)";
+# Find the pattern
+sed -i "s/CSH.Constant(name='p1', value=[0-9]*/CSH.Constant(name='p1', value=${appscale}/" problem.py;
+# Show what the problem.py file reads at the replace point
+grep "CSH.Constant(name='p1'" problem.py | awk '{$1=$1};1';
 echo;
 
 # find the conda path
@@ -40,5 +52,7 @@ runstr="python -m ytopt.search.ambs --evaluator subprocess --problem problem.Pro
 #-----This part submits the script you just created--------------
 #chmod +x batch.job
 #./batch.job
+echo "Job executes:";
 echo $runstr;
 eval $runstr;
+

@@ -1,0 +1,47 @@
+#!/bin/bash -x
+#PBS -l walltime=01:00:00
+#PBS -l select=3:system=polaris
+#PBS -l filesystems=home:grand:eage
+#PBS -A EE-ECP
+#PBS -q prod
+
+# Script to run libEnsemble using multiprocessing on launch nodes.
+# Assumes Conda environment is set up.
+
+# To be run with central job management
+# - Manager and workers run on launch node.
+# - Workers submit tasks to the nodes in the job available (using exe.pl)
+
+# Name of calling script
+export EXE=ytopt_libensemble.py
+
+# Communication Method
+export COMMS="--comms local"
+
+# Number of workers. For multiple nodes per worker, have nworkers be a divisor of nnodes, then add 1
+# e.g. for 2 nodes per worker, set nnodes = 12, nworkers = 7
+export NWORKERS="--nworkers 2"  # extra worker running generator (no resources needed)
+
+export EVALS="--max-evals 4"
+
+# Name of Conda environment
+export CONDA_ENV_NAME=ytune_23
+
+export PMI_NO_FORK=1 # Required for python kills on Theta
+
+# Load Polaris modules
+module load cudatoolkit-standalone/12.0.0;
+module load conda;
+
+# Activate conda environment
+export PYTHONNOUSERSITE=1
+conda activate \$CONDA_ENV_NAME
+
+# Ensure proper MPI and other libraries are used (not Conda MPI etc)
+module swap PrgEnv-gnu PrgEnv-nvhpc/8.3.3;
+
+# Launch libE
+pycommand="python $EXE $COMMS $NWORKERS --learner=RF $EVALS" # > out.txt 2>&1"
+echo "$pycommand";
+eval "$pycommand";
+    

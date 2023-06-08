@@ -1,7 +1,6 @@
 import os
 import sys
 import subprocess
-import signal
 import random
 import psutil
 
@@ -42,30 +41,36 @@ class Plopper:
                     #To avoid writing the Marker
                     f2.write(line)
 
-
-    # Function to find the execution metrics of the interim file, and return the throughput as cost to the search module
-    def findRuntime(self, x, params):
+    # Function to find the execution time of the interim file, and return the execution time as cost to the search module
+    def findRuntime(self, x, params, worker):
         interimfile = ""
-        exetime = 1
+        #exetime = float('inf')
+        #exetime = sys.maxsize
+        exetime = -1
         counter = random.randint(1, 10001) # To reduce collision increasing the sampling intervals
 
         interimfile = self.outputdir+"/"+str(counter)+".sh"
+        print(interimfile)
 
 
         # Generate intermediate file
         dictVal = self.createDict(x, params)
-        print(f"Plopper plotting {dictVal} to {interimfile}")
         self.plotValues(dictVal, self.sourcefile, interimfile)
 
+        #compile and find the execution time
+        #tmpbinary = interimfile[:-2]
         tmpbinary = interimfile
+        #tmpbinary = interimfile[:-3] + '_w' + str(worker)+".sh"
+
         kernel_idx = self.sourcefile.rfind('/')
         kernel_dir = self.sourcefile[:kernel_idx]
 
-        cmd2 = kernel_dir + "/exe.pl " + str(dictVal['P9']) + " " +  tmpbinary
+        cmd2 = kernel_dir + "/exe.pl " +  tmpbinary
 
-        #Find the execution throughput
+        #Find the execution time 
+        
         execution_status = subprocess.Popen(cmd2, shell=True, stdout=subprocess.PIPE)
-        app_timeout = 300
+        app_timeout = 100
 
         try:
                 outs, errs = execution_status.communicate(timeout=app_timeout)
@@ -77,7 +82,10 @@ class Plopper:
                 outs, errs = execution_status.communicate()
                 return app_timeout
 
-        minimizable_flops = float(outs.decode('utf-8').split('\n')[-1].strip())
+        exetime = float(outs.strip())
+        #exetime = execution_status.stdout.decode('utf-8')
+        #if exetime == 0:
+        #   exetime = -1
 
-        return minimizable_flops
+        return exetime #return execution time as cost
 

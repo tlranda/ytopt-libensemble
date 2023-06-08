@@ -15,7 +15,7 @@ foreach $filename (@ARGV[1 .. $#ARGV]) {
    @nn = (1..$nmax);
    for(@nn) {
     #$retval = gettimeofday( ); 
-    $N_NODES = 2; # REPLACE
+    $N_NODES = 2;
     print "/opt/cray/pe/pals/1.1.7/bin/mpiexec -n $N_NODES --ppn 4 --depth $depth sh $filename > tmpoutfile.txt 2>&1\n";
     system("/opt/cray/pe/pals/1.1.7/bin/mpiexec -n $N_NODES --ppn 4 --depth $depth sh $filename > tmpoutfile.txt 2>&1");
     open (TEMFILE, '<', $A_FILE);
