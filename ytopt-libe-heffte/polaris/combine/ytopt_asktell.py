@@ -14,6 +14,7 @@ def persistent_ytopt(H, persis_info, gen_specs, libE_info):
     ps = PersistentSupport(libE_info, EVAL_GEN_TAG)
     user_specs = gen_specs['user']
     ytoptimizer = user_specs['ytoptimizer']
+    machine_identifier = user_specs['machine_identifier']
 
     tag = None
     calc_in = None
@@ -61,15 +62,16 @@ def persistent_ytopt(H, persis_info, gen_specs, libE_info):
                         b += [str(entry[0])]
                     except:
                         b += [str(entry)]
+                b[-1] = calc_in[0][-1]
 
                 # Drop in ensemble directory
                 with open('../results.csv', 'a') as f:
                     if first_write:
                         f.write(",".join(calc_in.dtype.names)+ "\n")
-                        f.write(",".join(b)+ "\n")
+                        f.write(",".join(b)+"\n")
                         first_write = False
                     else:
-                        f.write(",".join(b)+ "\n")
+                        f.write(",".join(b)+"\n")
 
     return H_o, persis_info, FINISHED_PERSISTENT_GEN_TAG
 

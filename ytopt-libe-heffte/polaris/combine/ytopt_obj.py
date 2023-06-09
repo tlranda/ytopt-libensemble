@@ -16,11 +16,13 @@ def init_obj(H, persis_info, sim_specs, libE_info):
     for field in sim_specs['in']:
         point[field] = np.squeeze(H[field])
     point['nodes'] = sim_specs['user']['nodes']
+    machine_identifier = sim_specs['user']['machine_identifier']
 
     y = myobj(point, sim_specs['in'], libE_info['workerID'])  # ytopt objective wants a dict
     H_o = np.zeros(2, dtype=sim_specs['out'])
     H_o['FLOPS'] = y
     H_o['elapsed_sec'] = time.time() - start_time
+    H_o['machine_identifier'] = machine_identifier
 
     return H_o, persis_info
 
@@ -63,6 +65,7 @@ def myobj(point: dict, params: list, workerID: int) -> float:
         print(f"Worker {workerID} receives point {point}")
         x = np.array([point[f'p{i}'] for i in range(len(point))])
         def plopper_func(x, params):
+            # Should utilize machine identifier
             obj = Plopper('./speed3d.sh', './')
             x = np.asarray_chkfinite(x)
             value = [point[param] for param in params]

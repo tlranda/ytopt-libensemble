@@ -11,7 +11,6 @@ The number of concurrent evaluations of the objective function will be 4-1=3.
 
 import os
 import glob
-import secrets
 import numpy as np
 import itertools
 import subprocess
@@ -54,22 +53,18 @@ req_settings = ['learner','max-evals']
 assert all([opt in user_args for opt in req_settings]), \
     "Required settings missing. Specify each setting in " + str(req_settings)
 
+MACHINE_IDENTIFIER = "polaris-gpu"
+print(f"Identifying machine as {MACHINE_IDENTIFIER}")
 # Set options so workers operate in unique directories
 here = os.getcwd() + '/'
 libE_specs['use_worker_dirs'] = True
 libE_specs['sim_dirs_make'] = False  # Otherwise directories separated by each sim call
-ENSEMBLE_DIR_PATH = "4_workers_128_size_2_libe"
-ENSEMBLE_ADD_RANDOMIZATION = True
-if ENSEMBLE_DIR_PATH is None:
-    ENSEMBLE_DIR_PATH = ""
-if ENSEMBLE_ADD_RANDOMIZATION:
-    ENSEMBLE_DIR_PATH += secrets.token_hex(nbytes=4)
+ENSEMBLE_DIR_PATH = "4_workers_128_size_2_libe_820cbbae"
 libE_specs['ensemble_dir_path'] = f'./ensemble_{ENSEMBLE_DIR_PATH}'
 print(f"This ensemble operates as: {libE_specs['ensemble_dir_path']}")
 
 # Copy or symlink needed files into unique directories
-libE_specs['sim_dir_symlink_files'] = [here + f for f in ['speed3d.sh', 'exe.pl', 'plopper.py',]]# 'processexe.pl']]
-#libE_specs['sim_dir_symlink_files'] = [here + f for f in ['speed3d.sh', 'exe.pl', 'plopper.py', 'processexe.pl']]
+libE_specs['sim_dir_symlink_files'] = [here + f for f in ['speed3d.sh', 'exe.pl', 'plopper.py',]]
 
 # Variables that will be sed-edited to control scaling
 APP_SCALE = 128
@@ -147,9 +142,10 @@ ytoptimizer = Optimizer(
 sim_specs = {
     'sim_f': init_obj,
     'in': ['p0', 'p1', 'p2', 'p3', 'p4', 'p5','p6', 'p7', 'p8', 'p9'],
-    'out': [('FLOPS', float),('elapsed_sec', float)],
+    'out': [('FLOPS', float),('elapsed_sec', float),('machine_identifier','<U30')],
     'user': {
         'nodes': NODE_SCALE,
+        'machine_identifier': MACHINE_IDENTIFIER,
     }
 }
 
@@ -159,10 +155,11 @@ gen_specs = {
     'out': [('p0', "<U24", (1,)), ('p1', int, (1,)),('p2', "<U24", (1,)),('p3', "<U24", (1,)),
 		('p4', "<U24", (1,)),('p5', "<U24", (1,)),('p6', "<U24", (1,)),
 		('p7', float, (1,)), ('p8', float, (1,)),('p9', int, (1,))],
-    'persis_in': sim_specs['in'] + ['FLOPS'] + ['elapsed_sec'],
+    'persis_in': sim_specs['in'] + ['FLOPS'] + ['elapsed_sec'] + ['machine_identifier'],
     'user': {
         'ytoptimizer': ytoptimizer,  # provide optimizer to generator function
         'num_sim_workers': num_sim_workers,
+        'machine_identifier': MACHINE_IDENTIFIER,
     },
 }
 
@@ -194,3 +191,4 @@ if is_manager:
     #b = np.vstack(map(list, H[gen_specs['persis_in']]))
     #print(b)
     #np.savetxt('results.csv',b, header=','.join(dtypes.names), delimiter=',',fmt=','.join(['%s']*b.shape[1]))
+
