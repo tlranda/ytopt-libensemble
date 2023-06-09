@@ -117,7 +117,7 @@ module swap PrgEnv-gnu PrgEnv-nvhpc/8.3.3;
     job_contents = f"""#!/bin/bash -x
 #PBS -l walltime=01:00:00
 #PBS -l select={1+(args.worker_nodes*args.ensemble_workers)}:system=polaris
-#PBS -l filesystems=home:grand:eage
+#PBS -l filesystems=home:grand:eagle
 #PBS -A EE-ECP
 #PBS -q prod
 
