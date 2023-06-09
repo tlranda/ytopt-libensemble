@@ -19,6 +19,8 @@ class Plopper:
     def createDict(self, x, params):
         dictVal = {}
         for p, v in zip(params, x):
+            if type(v) is not str and hasattr(v,'__length__') and len(v) == 1:
+                v = v[0]
             dictVal[p] = v
         return(dictVal)
 
@@ -32,7 +34,7 @@ class Plopper:
                 modify_line = line
                 for key, value in dictVal.items():
                     if key in modify_line:
-                        if value != 'None': #For empty string options
+                        if value and value != 'None': #For empty string options
                             modify_line = modify_line.replace('#'+key, str(value))
 
                 if modify_line != line:
@@ -65,10 +67,10 @@ class Plopper:
         kernel_idx = self.sourcefile.rfind('/')
         kernel_dir = self.sourcefile[:kernel_idx]
 
-        cmd2 = kernel_dir + "/exe.pl " +  tmpbinary
+        cmd2 = f"{kernel_dir}/exe.pl {dictVal['P9']} {tmpbinary}"
 
-        #Find the execution time 
-        
+        #Find the execution time
+
         execution_status = subprocess.Popen(cmd2, shell=True, stdout=subprocess.PIPE)
         app_timeout = 100
 
@@ -82,7 +84,7 @@ class Plopper:
                 outs, errs = execution_status.communicate()
                 return app_timeout
 
-        exetime = float(outs.strip())
+        exetime = float(outs.decode('utf-8').split('\n')[-1].strip())
         #exetime = execution_status.stdout.decode('utf-8')
         #if exetime == 0:
         #   exetime = -1
