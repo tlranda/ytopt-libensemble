@@ -13,7 +13,8 @@ import os
 import glob
 import secrets
 import numpy as np
-import time
+import itertools
+import subprocess
 
 import multiprocessing
 multiprocessing.set_start_method('fork', force=True)
@@ -23,8 +24,8 @@ from libensemble.libE import libE
 from libensemble.alloc_funcs.start_only_persistent import only_persistent_gens as alloc_f
 from libensemble.tools import parse_args, save_libE_output, add_unique_random_streams
 
-from ytopt_obj import init_obj  # Simulator function, calls Plopper
 from ytopt_asktell import persistent_ytopt  # Generator function, communicates with ytopt optimizer
+from ytopt_obj import init_obj  # Simulator function, calls Plopper
 
 import ConfigSpace as CS
 import ConfigSpace.hyperparameters as CSH
@@ -57,24 +58,30 @@ assert all([opt in user_args for opt in req_settings]), \
 here = os.getcwd() + '/'
 libE_specs['use_worker_dirs'] = True
 libE_specs['sim_dirs_make'] = False  # Otherwise directories separated by each sim call
-libE_specs['ensemble_dir_path'] = './ensemble_' + secrets.token_hex(nbytes=4)
+ENSEMBLE_DIR_PATH = "4_workers_128_size_2_libe"
+ENSEMBLE_ADD_RANDOMIZATION = True
+if ENSEMBLE_DIR_PATH is None:
+    ENSEMBLE_DIR_PATH = ""
+if ENSEMBLE_ADD_RANDOMIZATION:
+    ENSEMBLE_DIR_PATH += secrets.token_hex(nbytes=4)
+libE_specs['ensemble_dir_path'] = f'./ensemble_{ENSEMBLE_DIR_PATH}'
+print(f"This ensemble operates as: {libE_specs['ensemble_dir_path']}")
 
 # Copy or symlink needed files into unique directories
 libE_specs['sim_dir_symlink_files'] = [here + f for f in ['speed3d.sh', 'exe.pl', 'plopper.py',]]# 'processexe.pl']]
 #libE_specs['sim_dir_symlink_files'] = [here + f for f in ['speed3d.sh', 'exe.pl', 'plopper.py', 'processexe.pl']]
 
-# Declare the sim_f to be optimized, and the input/outputs
-sim_specs = {
-    'sim_f': init_obj,
-    'in': ['p0', 'p1', 'p2', 'p3', 'p4', 'p5','p6', 'p7', 'p8', 'p9'],
-    'out': [('RUNTIME', float),('elapsed_sec', float)],
-}
-
+# Variables that will be sed-edited to control scaling
+APP_SCALE = 128
+NODE_SCALE = 4
+print(f"APP_SCALE (AKA Problem Size) = {APP_SCALE}")
+print(f"NODE_SCALE (AKA System Size) = {NODE_SCALE}")
 cs = CS.ConfigurationSpace(seed=1234)
 # arg1  precision
 p0 = CSH.CategoricalHyperparameter(name='p0', choices=["double", "float"], default_value="float")
 # arg2  3D array dimension size
-p1 = CSH.OrdinalHyperparameter(name='p1', sequence=[64,128,256,512,1024], default_value=128)
+p1 = CSH.Constant(name='p1', value=APP_SCALE)
+#p1 = CSH.OrdinalHyperparameter(name='p1', sequence=[64,128,256,512,1024], default_value=128)
 # arg3  reorder
 p2 = CSH.CategoricalHyperparameter(name='p2', choices=["-no-reorder", "-reorder"," "], default_value=" ")
 # arg4 alltoall
@@ -86,12 +93,42 @@ p5 = CSH.CategoricalHyperparameter(name='p5', choices=["-pencils", "-slabs"," "]
 # arg7
 p6 = CSH.CategoricalHyperparameter(name='p6', choices=["-r2c_dir 0", "-r2c_dir 1","-r2c_dir 2", " "], default_value=" ")
 # arg8
-p7 = CSH.CategoricalHyperparameter(name='p7', choices=["-ingrid 2 1 1", "-ingrid 1 2 1", "-ingrid 1 1 2", " "], default_value=" ")
+p7 = CSH.UniformFloatHyperparameter(name='p7', lower=0, upper=1)
 # arg9 
-p8 = CSH.CategoricalHyperparameter(name='p8', choices=["-outgrid 2 1 1", "-outgrid 1 2 1", "-outgrid 1 1 2"," "], default_value=" ")
-#number of threads
-#p9= CSH.UniformIntegerHyperparameter(name='p9', lower=2, upper=8, default_value=8, q=2)
-p9= CSH.OrdinalHyperparameter(name='p9', sequence=[2, 4, 8, 16, 32, 48, 64, 96, 128, 192, 256], default_value=64)
+p8 = CSH.UniformFloatHyperparameter(name='p8', lower=0, upper=1)
+# number of threads is hardware-dependent
+# Cross-architecture is out-of-scope for now so we determine this for the current platform and leave it at that
+proc = subprocess.run(['nproc'], capture_output=True)
+max_cpus = int(proc.stdout.decode('utf-8').strip())
+proc = subprocess.run('nvidia-smi -L'.split(' '), capture_output=True)
+if proc.returncode != 0:
+    raise ValueError("No GPUs Detected, but in GPU mode")
+gpus = len(proc.stdout.decode('utf-8').strip().split('\n'))
+# Change exe.pl's PPN value (var named N_NODES) based on the system
+proc = subprocess.run(['sed', '-i',f's/N_NODES = [0-9]*/N_NODES = {gpus}/', 'exe.pl'], capture_output=True)
+if proc.returncode != 0:
+    print(proc.stdout.decode('utf-8'))
+    print(proc.stderr.decode('utf-8'))
+    raise ValueError("sed Substitution for 'PPN' in 'exe.pl' Failed")
+else:
+    print(f"Node identified to have access to {max_cpus} cpus and {gpus} gpus")
+max_depth = max_cpus // gpus
+sequence = [2**_ for _ in range(1,10) if (2**_) <= max_depth]
+if len(sequence) >= 2:
+    intermediates = []
+    prevpow = sequence[1]
+    for rawpow in sequence[2:]:
+        if rawpow+prevpow >= max_depth:
+            break
+        intermediates.append(rawpow+prevpow)
+        prevpow = rawpow
+    sequence = sorted(intermediates + sequence)
+print(sequence)
+# Ensure max_depth is always in the list
+if np.log2(max_depth)-int(np.log2(max_depth)) > 0:
+    sequence = sorted(sequence+[max_depth])
+# arg10 number threads per MPI process
+p9 = CSH.OrdinalHyperparameter(name='p9', sequence=sequence, default_value=max_depth)
 
 cs.add_hyperparameters([p0, p1, p2, p3, p4, p5, p6, p7, p8, p9])
 
@@ -106,13 +143,23 @@ ytoptimizer = Optimizer(
     set_NI=10,
 )
 
+# Declare the sim_f to be optimized, and the input/outputs
+sim_specs = {
+    'sim_f': init_obj,
+    'in': ['p0', 'p1', 'p2', 'p3', 'p4', 'p5','p6', 'p7', 'p8', 'p9'],
+    'out': [('FLOPS', float),('elapsed_sec', float)],
+    'user': {
+        'nodes': NODE_SCALE,
+    }
+}
+
 # Declare the gen_f that will generate points for the sim_f, and the various input/outputs
 gen_specs = {
     'gen_f': persistent_ytopt,
     'out': [('p0', "<U24", (1,)), ('p1', int, (1,)),('p2', "<U24", (1,)),('p3', "<U24", (1,)),
 		('p4', "<U24", (1,)),('p5', "<U24", (1,)),('p6', "<U24", (1,)),
-		('p7', "<U30", (1,)), ('p8', "<U30", (1,)),('p9', int, (1,))],
-    'persis_in': sim_specs['in'] + ['RUNTIME'] + ['elapsed_sec'],
+		('p7', float, (1,)), ('p8', float, (1,)),('p9', int, (1,))],
+    'persis_in': sim_specs['in'] + ['FLOPS'] + ['elapsed_sec'],
     'user': {
         'ytoptimizer': ytoptimizer,  # provide optimizer to generator function
         'num_sim_workers': num_sim_workers,
@@ -125,7 +172,7 @@ alloc_specs = {
 }
 
 # Specify when to exit. More options: https://libensemble.readthedocs.io/en/main/data_structures/exit_criteria.html
-exit_criteria = {'gen_max': int(user_args['max-evals'])}
+exit_criteria = {'sim_max': int(user_args['max-evals'])}
 
 # Added as a workaround to issue that's been resolved on develop
 persis_info = add_unique_random_streams({}, nworkers + 1)

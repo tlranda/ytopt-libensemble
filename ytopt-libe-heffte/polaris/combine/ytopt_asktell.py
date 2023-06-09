@@ -35,8 +35,8 @@ def persistent_ytopt(H, persis_info, gen_specs, libE_info):
                 field_params = {}
                 for field in fields:
                     field_params[field] = entry[field][0]
-                results += [(field_params, entry['RUNTIME'])]
-            print('results: ', results)
+                results += [(field_params, entry['FLOPS'])]
+            #print('results: ', results)
             ytoptimizer.tell(results)
 
             ytopt_points = ytoptimizer.ask(n_points=batch_size)  # Returns a generator that we convert to a list
@@ -51,18 +51,19 @@ def persistent_ytopt(H, persis_info, gen_specs, libE_info):
         # This returns the requested points to the libE manager, which will
         # perform the sim_f evaluations and then give back the values.
         tag, Work, calc_in = ps.send_recv(H_o)
-        print('received:', calc_in, flush=True)
+        #print('received:', calc_in, flush=True)
 
         if calc_in is not None:
             if len(calc_in):
                 b = []
                 for entry in calc_in[0]:
-                    try: 
+                    try:
                         b += [str(entry[0])]
-                    except: 
+                    except:
                         b += [str(entry)]
 
-                with open('../../results.csv', 'a') as f:
+                # Drop in ensemble directory
+                with open('../results.csv', 'a') as f:
                     if first_write:
                         f.write(",".join(calc_in.dtype.names)+ "\n")
                         f.write(",".join(b)+ "\n")
@@ -71,3 +72,4 @@ def persistent_ytopt(H, persis_info, gen_specs, libE_info):
                         f.write(",".join(b)+ "\n")
 
     return H_o, persis_info, FINISHED_PERSISTENT_GEN_TAG
+

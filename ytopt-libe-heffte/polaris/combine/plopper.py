@@ -3,6 +3,7 @@ import sys
 import subprocess
 import random
 import psutil
+import numpy as np
 
 class Plopper:
     def __init__(self,sourcefile,outputdir):
@@ -19,8 +20,8 @@ class Plopper:
     def createDict(self, x, params):
         dictVal = {}
         for p, v in zip(params, x):
-            if type(v) is not str and hasattr(v,'__length__') and len(v) == 1:
-                v = v[0]
+            if type(v) is np.ndarray and v.shape == ():
+                v = v.tolist()
             dictVal[p] = v
         return(dictVal)
 
@@ -45,6 +46,7 @@ class Plopper:
 
     # Function to find the execution time of the interim file, and return the execution time as cost to the search module
     def findRuntime(self, x, params, worker):
+        #print(worker, x, params)
         interimfile = ""
         #exetime = float('inf')
         #exetime = sys.maxsize
@@ -52,11 +54,12 @@ class Plopper:
         counter = random.randint(1, 10001) # To reduce collision increasing the sampling intervals
 
         interimfile = self.outputdir+"/"+str(counter)+".sh"
-        print(interimfile)
+        #print(interimfile)
 
 
         # Generate intermediate file
         dictVal = self.createDict(x, params)
+        #print(worker, dictVal)
         self.plotValues(dictVal, self.sourcefile, interimfile)
 
         #compile and find the execution time
@@ -68,11 +71,12 @@ class Plopper:
         kernel_dir = self.sourcefile[:kernel_idx]
 
         cmd2 = f"{kernel_dir}/exe.pl {dictVal['P9']} {tmpbinary}"
+        print(worker, cmd2)
 
         #Find the execution time
 
         execution_status = subprocess.Popen(cmd2, shell=True, stdout=subprocess.PIPE)
-        app_timeout = 100
+        app_timeout = 30
 
         try:
                 outs, errs = execution_status.communicate(timeout=app_timeout)
@@ -85,9 +89,7 @@ class Plopper:
                 return app_timeout
 
         exetime = float(outs.decode('utf-8').split('\n')[-1].strip())
-        #exetime = execution_status.stdout.decode('utf-8')
-        #if exetime == 0:
-        #   exetime = -1
+        print(worker, exetime)
 
         return exetime #return execution time as cost
 
