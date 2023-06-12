@@ -57,6 +57,8 @@ def parse(prs=None, args=None):
         args.ensemble_dir_path = ""
     if args.ensemble_path_randomization:
         import secrets
+        if args.ensemble_dir_path == "":
+            args.ensemble_dir_path = '"'
         args.ensemble_dir_path += "_"+secrets.token_hex(nbytes=4)
     if args.ensemble_dir_path == "":
         args.ensemble_dir_path = '"'
@@ -121,6 +123,11 @@ module swap PrgEnv-gnu PrgEnv-nvhpc/8.3.3;
 #PBS -A EE-ECP
 #PBS -q prod
 
+# Script output should indicate basic information
+echo "$HOSTNAME";
+date;
+echo;
+
 # Script to run libEnsemble using multiprocessing on launch nodes.
 # Assumes Conda environment is set up.
 
@@ -147,7 +154,10 @@ export EVALS="--max-evals {args.max_evals}"
 pycommand="python $EXE $COMMS $NWORKERS --learner=RF $EVALS" # > out.txt 2>&1"
 echo "$pycommand";
 eval "$pycommand";
-    """
+echo;
+date;
+echo;
+"""
     print(f"Produce job script {args.generated_script}")
     with open(args.generated_script, 'w') as f:
         f.write(job_contents)

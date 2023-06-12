@@ -36,6 +36,10 @@ nworkers, is_manager, libE_specs, user_args_in = parse_args()
 num_sim_workers = nworkers - 1  # Subtracting one because one worker will be the generator
 
 assert len(user_args_in), "learner, etc. not specified, e.g. --learner RF"
+#if not len(user_args_in):
+#    import warnings
+#    warnings.warn("LIBE DEBUG SETTINGS FOR LEARNER/MAX-EVALS USED")
+#    user_args_in = ['--learner=RF', '--max-evals=3']
 user_args = {}
 for entry in user_args_in:
     if entry.startswith('--'):
@@ -53,24 +57,19 @@ req_settings = ['learner','max-evals']
 assert all([opt in user_args for opt in req_settings]), \
     "Required settings missing. Specify each setting in " + str(req_settings)
 
-MACHINE_IDENTIFIER = "polaris-gpu"
+MACHINE_IDENTIFIER = "c357706l"
 print(f"Identifying machine as {MACHINE_IDENTIFIER}")
 # Set options so workers operate in unique directories
 here = os.getcwd() + '/'
 libE_specs['use_worker_dirs'] = True
 libE_specs['sim_dirs_make'] = False  # Otherwise directories separated by each sim call
-ENSEMBLE_DIR_PATH = "4_workers_128_size_2_libe_820cbbae"
+ENSEMBLE_DIR_PATH = "_1a3eea36"
 libE_specs['ensemble_dir_path'] = f'./ensemble_{ENSEMBLE_DIR_PATH}'
 print(f"This ensemble operates as: {libE_specs['ensemble_dir_path']}")
 
 # Copy or symlink needed files into unique directories
 libE_specs['sim_dir_symlink_files'] = [here + f for f in ['speed3d.sh', 'exe.pl', 'plopper.py',]]
 
-# Variables that will be sed-edited to control scaling
-APP_SCALE = 128
-NODE_SCALE = 4
-print(f"APP_SCALE (AKA Problem Size) = {APP_SCALE}")
-print(f"NODE_SCALE (AKA System Size) = {NODE_SCALE}")
 cs = CS.ConfigurationSpace(seed=1234)
 # arg1  precision
 p0 = CSH.CategoricalHyperparameter(name='p0', choices=["double", "float"], default_value="float")
@@ -95,19 +94,31 @@ p8 = CSH.UniformFloatHyperparameter(name='p8', lower=0, upper=1)
 # Cross-architecture is out-of-scope for now so we determine this for the current platform and leave it at that
 proc = subprocess.run(['nproc'], capture_output=True)
 max_cpus = int(proc.stdout.decode('utf-8').strip())
-proc = subprocess.run('nvidia-smi -L'.split(' '), capture_output=True)
-if proc.returncode != 0:
-    raise ValueError("No GPUs Detected, but in GPU mode")
-gpus = len(proc.stdout.decode('utf-8').strip().split('\n'))
-# Change exe.pl's PPN value (var named N_NODES) based on the system
-proc = subprocess.run(['sed', '-i',f's/N_NODES = [0-9]*/N_NODES = {gpus}/', 'exe.pl'], capture_output=True)
-if proc.returncode != 0:
-    print(proc.stdout.decode('utf-8'))
-    print(proc.stderr.decode('utf-8'))
-    raise ValueError("sed Substitution for 'PPN' in 'exe.pl' Failed")
+gpu_enabled = False
+if gpu_enabled:
+    proc = subprocess.run('nvidia-smi -L'.split(' '), capture_output=True)
+    if proc.returncode != 0:
+        raise ValueError("No GPUs Detected, but in GPU mode")
+    gpus = len(proc.stdout.decode('utf-8').strip().split('\n'))
+    # Change exe.pl's PPN value (var named N_NODES) based on the system
+    proc = subprocess.run(['sed', '-i',f's/N_NODES = [0-9]*/N_NODES = {gpus}/', 'exe.pl'], capture_output=True)
+    if proc.returncode != 0:
+        print(proc.stdout.decode('utf-8'))
+        print(proc.stderr.decode('utf-8'))
+        raise ValueError("sed Substitution for 'PPN' in 'exe.pl' Failed")
+    else:
+        print(f"Node identified to have access to {max_cpus} cpus and {gpus} gpus")
+    PPN = gpus
 else:
-    print(f"Node identified to have access to {max_cpus} cpus and {gpus} gpus")
-max_depth = max_cpus // gpus
+    PPN = 1
+# Variables that will be sed-edited to control scaling
+APP_SCALE = 128
+NODE_SCALE = 2
+print(f"APP_SCALE (AKA Problem Size X, X, X) = {APP_SCALE} x3")
+print(f"NODE_SCALE (AKA System Size X, Y) = {NODE_SCALE}, {PPN}")
+TOTAL_PROC = NODE_SCALE * PPN
+# Don't exceed #threads across any rank
+max_depth = max_cpus // PPN
 sequence = [2**_ for _ in range(1,10) if (2**_) <= max_depth]
 if len(sequence) >= 2:
     intermediates = []
@@ -137,29 +148,55 @@ ytoptimizer = Optimizer(
     set_SEED=2345,
     set_NI=10,
 )
+MACHINE_INFO = {
+    'identifier': MACHINE_IDENTIFIER,
+    'mpi_ranks': NODE_SCALE,
+    'ppn': PPN,
+    'gpu_enabled': gpu_enabled,
+    'libE_workers': num_sim_workers,
+}
 
 # Declare the sim_f to be optimized, and the input/outputs
 sim_specs = {
     'sim_f': init_obj,
-    'in': ['p0', 'p1', 'p2', 'p3', 'p4', 'p5','p6', 'p7', 'p8', 'p9'],
-    'out': [('FLOPS', float),('elapsed_sec', float),('machine_identifier','<U30')],
+    'in': [f'p{_}' for _ in range(10)],
+    'out': [('FLOPS', float, (1,)),
+            ('elapsed_sec', float, (1,)),
+            ('machine_identifier','<U30', (1,)),
+            ('mpi_ranks', int, (1,)),
+            ('ppn', int, (1,)),
+            ('gpu_enabled', bool, (1,)),
+            ('libE_workers', int, (1,)),],
     'user': {
-        'nodes': NODE_SCALE,
-        'machine_identifier': MACHINE_IDENTIFIER,
+        'machine_info': MACHINE_INFO,
     }
 }
 
 # Declare the gen_f that will generate points for the sim_f, and the various input/outputs
 gen_specs = {
     'gen_f': persistent_ytopt,
-    'out': [('p0', "<U24", (1,)), ('p1', int, (1,)),('p2', "<U24", (1,)),('p3', "<U24", (1,)),
-		('p4', "<U24", (1,)),('p5', "<U24", (1,)),('p6', "<U24", (1,)),
-		('p7', float, (1,)), ('p8', float, (1,)),('p9', int, (1,))],
-    'persis_in': sim_specs['in'] + ['FLOPS'] + ['elapsed_sec'] + ['machine_identifier'],
+    'out': [('p0', "<U24", (1,)),
+            ('p1', int, (1,)),
+            ('p2', "<U24", (1,)),
+            ('p3', "<U24", (1,)),
+            ('p4', "<U24", (1,)),
+            ('p5', "<U24", (1,)),
+            ('p6', "<U24", (1,)),
+            ('p7', float, (1,)),
+            ('p8', float, (1,)),
+            ('p9', int, (1,))],
+    'persis_in': sim_specs['in'] +\
+                 ['FLOPS'] +\
+                 ['elapsed_sec'] +\
+                 ['machine_identifier'] +\
+                 ['mpi_ranks'] +\
+                 ['ppn'] +\
+                 ['gpu_enabled'] +\
+                 ['libE_workers'],
     'user': {
         'ytoptimizer': ytoptimizer,  # provide optimizer to generator function
         'num_sim_workers': num_sim_workers,
-        'machine_identifier': MACHINE_IDENTIFIER,
+        'machine_info': MACHINE_INFO,
     },
 }
 
@@ -174,21 +211,21 @@ exit_criteria = {'sim_max': int(user_args['max-evals'])}
 # Added as a workaround to issue that's been resolved on develop
 persis_info = add_unique_random_streams({}, nworkers + 1)
 
-# Perform the libE run
-H, persis_info, flag = libE(sim_specs, gen_specs, exit_criteria, persis_info,
-                            alloc_specs=alloc_specs, libE_specs=libE_specs)
+if __name__ == '__main__':
+    # Perform the libE run
+    H, persis_info, flag = libE(sim_specs, gen_specs, exit_criteria, persis_info,
+                                alloc_specs=alloc_specs, libE_specs=libE_specs)
+    # Save History array to file
+    if is_manager:
+        print("\nlibEnsemble has completed evaluations.")
+        #save_libE_output(H, persis_info, __file__, nworkers)
 
-# Save History array to file
-if is_manager:
-    print("\nlibEnsemble has completed evaluations.")
-    #save_libE_output(H, persis_info, __file__, nworkers)
-
-    #print("\nSaving just sim_specs[['in','out']] to a CSV")
-    #H = np.load(glob.glob('*.npy')[0])
-    #H = H[H["sim_ended"]]
-    #H = H[H["returned"]]
-    #dtypes = H[gen_specs['persis_in']].dtype
-    #b = np.vstack(map(list, H[gen_specs['persis_in']]))
-    #print(b)
-    #np.savetxt('results.csv',b, header=','.join(dtypes.names), delimiter=',',fmt=','.join(['%s']*b.shape[1]))
+        #print("\nSaving just sim_specs[['in','out']] to a CSV")
+        #H = np.load(glob.glob('*.npy')[0])
+        #H = H[H["sim_ended"]]
+        #H = H[H["returned"]]
+        #dtypes = H[gen_specs['persis_in']].dtype
+        #b = np.vstack(map(list, H[gen_specs['persis_in']]))
+        #print(b)
+        #np.savetxt('results.csv',b, header=','.join(dtypes.names), delimiter=',',fmt=','.join(['%s']*b.shape[1]))
 

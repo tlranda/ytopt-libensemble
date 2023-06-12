@@ -15,18 +15,25 @@ def init_obj(H, persis_info, sim_specs, libE_info):
     point = {}
     for field in sim_specs['in']:
         point[field] = np.squeeze(H[field])
-    point['nodes'] = sim_specs['user']['nodes']
-    machine_identifier = sim_specs['user']['machine_identifier']
+    # Pass along machine info to point for topology preparation
+    machine_info = sim_specs['user']['machine_info']
+    point['machine_info'] = machine_info
 
     y = myobj(point, sim_specs['in'], libE_info['workerID'])  # ytopt objective wants a dict
-    H_o = np.zeros(2, dtype=sim_specs['out'])
+    H_o = np.zeros(len(sim_specs['out']), dtype=sim_specs['out'])
     H_o['FLOPS'] = y
     H_o['elapsed_sec'] = time.time() - start_time
-    H_o['machine_identifier'] = machine_identifier
+    # Wrap in list for ask-tell processing as a CSV
+    # Passed back for processing in CSV records
+    H_o['machine_identifier'] = [machine_info['identifier']]
+    H_o['mpi_ranks'] = [machine_info['mpi_ranks']]
+    H_o['ppn'] = [machine_info['ppn']]
+    H_o['gpu_enabled'] = [machine_info['gpu_enabled']]
+    H_o['libE_workers'] = [machine_info['libE_workers']]
 
     return H_o, persis_info
 
-candidate_orders = [(0,1,2),(0,2,1),(1,0,2),(1,2,0),(2,0,1),(2,1,0)]
+candidate_orders = [_ for _ in itertools.product([0,1,2], repeat=3) if len(_) == len(set(_))]
 topology_keymap = {'p7': '-ingrid', 'p8': '-outgrid'}
 topology_cache = {}
 def make_topology(budget: int) -> list[tuple[int,int,int]]:
@@ -40,12 +47,15 @@ def make_topology(budget: int) -> list[tuple[int,int,int]]:
            np.any([tuple([candidate[_] for _ in order]) in topology for order in candidate_orders]):
             continue
         topology.append(candidate)
+    # Add the null space
+    topology += [' ']
     return topology
 def topology_interpret(config: dict) -> dict:
-    budget = config.pop('nodes') # Raises KeyError if not present
+    machine_info = config.pop('machine_info') # Raises KeyError if not present
+    budget = machine_info['mpi_ranks'] * machine_info['ppn']
     if budget not in topology_cache.keys():
         topology_cache[budget] = make_topology(budget)
-    topology = topology_cache[budget]+[' ']
+    topology = topology_cache[budget]
     # Replace each key with uniform bucketized value
     for topology_key in topology_keymap.keys():
         selection = min(int(config[topology_key] * len(topology)), len(topology)-1)

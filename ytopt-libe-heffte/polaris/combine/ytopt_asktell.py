@@ -4,7 +4,8 @@ This module wraps around the ytopt generator.
 import numpy as np
 from libensemble.message_numbers import STOP_TAG, PERSIS_STOP, FINISHED_PERSISTENT_GEN_TAG, EVAL_GEN_TAG
 from libensemble.tools.persistent_support import PersistentSupport
-
+import logging
+logger = logging.getLogger(__name__)
 
 __all__ = ['persistent_ytopt']
 
@@ -14,7 +15,6 @@ def persistent_ytopt(H, persis_info, gen_specs, libE_info):
     ps = PersistentSupport(libE_info, EVAL_GEN_TAG)
     user_specs = gen_specs['user']
     ytoptimizer = user_specs['ytoptimizer']
-    machine_identifier = user_specs['machine_identifier']
 
     tag = None
     calc_in = None
@@ -36,7 +36,7 @@ def persistent_ytopt(H, persis_info, gen_specs, libE_info):
                 field_params = {}
                 for field in fields:
                     field_params[field] = entry[field][0]
-                results += [(field_params, entry['FLOPS'])]
+                results += [(field_params, entry['FLOPS'][0])]
             #print('results: ', results)
             ytoptimizer.tell(results)
 
@@ -57,12 +57,14 @@ def persistent_ytopt(H, persis_info, gen_specs, libE_info):
         if calc_in is not None:
             if len(calc_in):
                 b = []
-                for entry in calc_in[0]:
+                for field_name, entry in zip(gen_specs['persis_in'], calc_in[0]):
                     try:
                         b += [str(entry[0])]
-                    except:
+                    except Exception as e:
+                        from inspect import currentframe
+                        logger.warning(f"Field '{field_name}' with value '{entry}' produced exception {e.__class__} during persistent output in {__file__}:{currentframe().f_back.f_lineno}")
+                        #logger.info(f"Entry {entry} produced exception {e.__class__} during persistent output in {__file__}:{currentframe().f_back.f_lineno}")
                         b += [str(entry)]
-                b[-1] = calc_in[0][-1]
 
                 # Drop in ensemble directory
                 with open('../results.csv', 'a') as f:

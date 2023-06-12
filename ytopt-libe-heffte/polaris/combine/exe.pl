@@ -6,7 +6,6 @@
 #
 use Time::HiRes qw(gettimeofday); 
 
-$A_FILE = "tmpoutfile.txt";
 $depth = $ARGV[0];
 foreach $filename (@ARGV[1 .. $#ARGV]) {
    #print "Start to preprocess ", $filename, "...\n";
@@ -16,9 +15,11 @@ foreach $filename (@ARGV[1 .. $#ARGV]) {
    for(@nn) {
     #$retval = gettimeofday( ); 
     $N_NODES = 2;
-    print "/opt/cray/pe/pals/1.1.7/bin/mpiexec -n $N_NODES --ppn 4 --depth $depth sh $filename > tmpoutfile.txt 2>&1\n";
-    system("/opt/cray/pe/pals/1.1.7/bin/mpiexec -n $N_NODES --ppn 4 --depth $depth sh $filename > tmpoutfile.txt 2>&1");
-    open (TEMFILE, '<', $A_FILE);
+    $tmpname = $filename;
+    $tmpname =~ s/.sh/.log/;
+    print "/opt/cray/pe/pals/1.1.7/bin/mpiexec -n $N_NODES --ppn 4 --depth $depth sh $filename > $tmpname 2>&1\n";
+    system("/opt/cray/pe/pals/1.1.7/bin/mpiexec -n $N_NODES --ppn 4 --depth $depth sh $filename > $tmpname 2>&1");
+    open (TEMFILE, '<', $tmpname);
     while (<TEMFILE>) {
         $line = $_;
         chomp ($line);
