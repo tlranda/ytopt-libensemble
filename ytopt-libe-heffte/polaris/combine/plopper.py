@@ -4,17 +4,15 @@ import subprocess
 import random
 import psutil
 import numpy as np
+import warnings
 
 class Plopper:
     def __init__(self,sourcefile,outputdir):
-
         # Initilizing global variables
         self.sourcefile = sourcefile
         self.outputdir = outputdir+"/tmp_files"
-
         if not os.path.exists(self.outputdir):
             os.makedirs(self.outputdir)
-
 
     #Creating a dictionary using parameter label and value
     def createDict(self, x, params):
@@ -37,7 +35,6 @@ class Plopper:
                     if key in modify_line:
                         if value and value != 'None': #For empty string options
                             modify_line = modify_line.replace('#'+key, str(value))
-
                 if modify_line != line:
                     f2.write(modify_line)
                 else:
@@ -47,49 +44,42 @@ class Plopper:
     # Function to find the execution time of the interim file, and return the execution time as cost to the search module
     def findRuntime(self, x, params, worker):
         #print(worker, x, params)
-        interimfile = ""
-        #exetime = float('inf')
-        #exetime = sys.maxsize
-        exetime = -1
-        counter = random.randint(1, 10001) # To reduce collision increasing the sampling intervals
-
-        interimfile = self.outputdir+"/"+str(counter)+".sh"
-        #print(interimfile)
-
-
-        # Generate intermediate file
         dictVal = self.createDict(x, params)
         #print(worker, dictVal)
+
+        # Generate intermediate file
+        counter = random.randint(1, 10001) # To reduce collision increasing the sampling intervals
+        interimfile = f"{self.outputdir}/{counter}.sh"
         self.plotValues(dictVal, self.sourcefile, interimfile)
 
-        #compile and find the execution time
-        #tmpbinary = interimfile[:-2]
-        tmpbinary = interimfile
-        #tmpbinary = interimfile[:-3] + '_w' + str(worker)+".sh"
-
-        kernel_idx = self.sourcefile.rfind('/')
-        kernel_dir = self.sourcefile[:kernel_idx]
-
-        cmd2 = f"{kernel_dir}/exe.pl {dictVal['P9']} {tmpbinary}"
-        print(worker, cmd2)
+        kernel_dir = os.path.dirname(self.sourcefile)
+        #cmd2 = f"{kernel_dir}/exe.pl {dictVal['P9']} {interimfile}"
+        #print(worker, cmd2)
 
         #Find the execution time
+        app_timeout = 300
+        n_nodes = 8
+        ppn = 4
+        n_repeats = 3
 
-        execution_status = subprocess.Popen(cmd2, shell=True, stdout=subprocess.PIPE)
-        app_timeout = 30
-
-        try:
-                outs, errs = execution_status.communicate(timeout=app_timeout)
-        except subprocess.TimeoutExpired:
-                execution_status.kill()
-                for proc in psutil.process_iter(attrs=['pid', 'name']):
-                    if 'exe.pl' in proc.info['name']:
-                        proc.kill()
-                outs, errs = execution_status.communicate()
-                return app_timeout
-
-        exetime = float(outs.decode('utf-8').split('\n')[-1].strip())
-        print(worker, exetime)
-
-        return exetime #return execution time as cost
+        cmd = f"timeout {app_timeout} mpiexec -n {n_nodes} --ppn {ppn} --depth {dictVal['p9']} sh {interimfile}"
+        print(worker,cmd)
+        #exetime = float('inf')
+        #exetime = sys.maxsize
+        #exetime = -1
+        results = []
+        for attempt in range(n_repeats):
+            this_log = f"{self.outputdir}/{counter}_{attempt}.log"
+            execution_status = subprocess.Popen(cmd, shell=True, stdout=this_log, stderr=this_log)
+            try:
+                with open(this_log,"r") as logged:
+                    lines = [_.rstrip() for _ in logged.readlines()]
+                    for line in lines:
+                        if "Performance: " in line:
+                            split = [_ for _ in line.split(' ') if len(_) > 0]
+                            results.append(-1 * float(split[1]))
+                            break
+            except Exception as e:
+                warnings.warn(f"Evaluation raised {e.__class__.__name__}: {e.args}")
+        return np.mean(results)
 

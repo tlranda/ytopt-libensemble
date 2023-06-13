@@ -67,7 +67,13 @@ input_space = [('Categorical',
                 }
                ),
               ]
+APP_SCALES = [64,128,256,512,1024]
+APP_SCALE_NAMES = ['N','S','M','L','XL']
+NODE_SCALES = [2,4,6,8]
+lookup_ival = dict(((k1,k2),f"{v2}_{k1}") for (k2,v2) in zip(APP_SCALES, APP_SCALE_NAMES) for k1 in NODE_SCALES)
 
-lookup_ival = {16: ('N', 'MINI'), 40: ('S', 'SMALL')}
+def customize_space(self):
+    self.space = altered_space
+
 __getattr__ = libe_problem_builder(lookup_ival, input_space, HERE, name='heFFTe_Problem')
 
