@@ -63,7 +63,7 @@ print(f"Identifying machine as {MACHINE_IDENTIFIER}")
 here = os.getcwd() + '/'
 libE_specs['use_worker_dirs'] = True
 libE_specs['sim_dirs_make'] = False  # Otherwise directories separated by each sim call
-ENSEMBLE_DIR_PATH = "libE_Scaling_4_debug"
+ENSEMBLE_DIR_PATH = "libE_debug"
 libE_specs['ensemble_dir_path'] = f'./ensemble_{ENSEMBLE_DIR_PATH}'
 print(f"This ensemble operates as: {libE_specs['ensemble_dir_path']}")
 
@@ -117,8 +117,8 @@ else:
 print(f"APP_SCALE (AKA Problem Size X, X, X) = {APP_SCALE} x3")
 print(f"NODE_SCALE (AKA System Size X, Y) = {NODE_SCALE}, {PPN}")
 TOTAL_PROC = NODE_SCALE * PPN
-# Don't exceed #threads across any rank
-max_depth = max_cpus // PPN
+# Don't exceed #threads across total ranks
+max_depth = max_cpus // TOTAL_PROC
 sequence = [2**_ for _ in range(1,10) if (2**_) <= max_depth]
 if len(sequence) >= 2:
     intermediates = []
@@ -129,10 +129,11 @@ if len(sequence) >= 2:
         intermediates.append(rawpow+prevpow)
         prevpow = rawpow
     sequence = sorted(intermediates + sequence)
-print(sequence)
 # Ensure max_depth is always in the list
 if np.log2(max_depth)-int(np.log2(max_depth)) > 0:
     sequence = sorted(sequence+[max_depth])
+print(f"Given {NODE_SCALE} nodes * {PPN} processes-per-node (={TOTAL_PROC}) and {max_cpus} CPUS on this node...")
+print(f"Selectable depths are: {sequence}")
 # arg10 number threads per MPI process
 p9 = CSH.OrdinalHyperparameter(name='p9', sequence=sequence, default_value=max_depth)
 
@@ -222,9 +223,18 @@ if __name__ == '__main__':
         # We may have missed the final evaluation in the results file
         print("\nlibEnsemble has completed evaluations.")
         import pandas as pd
-        H = H[H["sim_ended"]][gen_specs['persis_in']]
-        full_log = pd.DataFrame(dict((k,H[k].flatten()) for k in gen_specs['persis_in']))
+        unfinished = H[~H["sim_ended"]][gen_specs['persis_in']]
+        unfinished_log = pd.DataFrame(dict((k, unfinished[k].flatten()) for k in gen_specs['persis_in']))
+        final_output = f"{libE_specs['ensemble_dir_path']}/unfinished_results.csv"
+        if len(unfinished_log) == 0:
+            print("All simulations finished.")
+        else:
+            unfinished_log.to_csv(final_output, index=False)
+            print(f"{len(unfinished_log)} unfinished results logged to {final_output}")
+
+        finished = H[H["sim_ended"]][gen_specs['persis_in']]
+        full_log = pd.DataFrame(dict((k, finished[k].flatten()) for k in gen_specs['persis_in']))
         final_output = f"{libE_specs['ensemble_dir_path']}/results.csv"
         full_log.to_csv(final_output, index=False)
-        print(f"Full results logged to {final_output}")
+        print(f"All finished results logged to {final_output}")
 

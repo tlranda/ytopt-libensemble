@@ -20,8 +20,8 @@ def build():
                         help="Maximum evaluations collected by ensemble (default: %(default)s)")
     ensemble.add_argument("--comms", choices=['mpi','local'], default='local',
                         help="Which call setup is used for libEnsemble itself (default: %(default)s)")
-    ensemble.add_argument("--configure-environment", choices=["none", "polaris"], default="none",
-                        help="Set up environment based on known systems (default: %(default)s)")
+    ensemble.add_argument("--configure-environment", choices=["none", "polaris", "craympi"], nargs="*",
+                        help="Set up environment based on known systems (default: No customization)")
     ensemble.add_argument("--machine-identifier", type=str, default=None,
                         help="Used to identify if a configuration's performance is already known on this machine (default: HOSTNAME)")
     ensemble.add_argument("--ensemble-dir-path", type=str, default=None,
@@ -110,13 +110,17 @@ module load conda;
 
 # Activate conda environment
 export PYTHONNOUSERSITE=1
-conda activate \$CONDA_ENV_NAME
+conda activate $CONDA_ENV_NAME
 
 # Ensure proper MPI and other libraries are used (not Conda MPI etc)
 module swap PrgEnv-gnu PrgEnv-nvhpc/8.3.3;
+""",
+    "craympi": """
+export IBV_FORK_SAFE=1; # May fix some MPI issues where processes call fork()
 """
     }
     # Prepare job
+    env_adjust = "\n".join([known_environments[env] for env in args.configure_environment])
     job_contents = f"""#!/bin/bash -x
 #PBS -l walltime=01:00:00
 #PBS -l select={1+(args.worker_nodes*args.ensemble_workers)}:system=polaris
@@ -149,7 +153,7 @@ export NWORKERS="--nworkers {1+args.ensemble_workers}"  # extra worker running g
 export EVALS="--max-evals {args.max_evals}"
 
 # ADJUST ENVIRONMENT
-{known_environments[args.configure_environment]}
+{env_adjust}
 
 # Launch libE
 pycommand="python $EXE $COMMS $NWORKERS --learner=RF $EVALS" # > out.txt 2>&1"
@@ -173,3 +177,4 @@ echo;
         if proc.returncode == 0 and args.display_results:
             import pandas as pd
             print(pd.read_csv(f"./ensemble_{args.ensemble_dir_path[1:-1]}/results.csv"))
+
