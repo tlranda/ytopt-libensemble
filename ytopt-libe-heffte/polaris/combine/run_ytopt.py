@@ -63,13 +63,16 @@ print(f"Identifying machine as {MACHINE_IDENTIFIER}")
 here = os.getcwd() + '/'
 libE_specs['use_worker_dirs'] = True
 libE_specs['sim_dirs_make'] = False  # Otherwise directories separated by each sim call
-ENSEMBLE_DIR_PATH = "_1a3eea36"
+ENSEMBLE_DIR_PATH = "_f7cf21e5"
 libE_specs['ensemble_dir_path'] = f'./ensemble_{ENSEMBLE_DIR_PATH}'
 print(f"This ensemble operates as: {libE_specs['ensemble_dir_path']}")
 
 # Copy or symlink needed files into unique directories
 libE_specs['sim_dir_symlink_files'] = [here + f for f in ['speed3d.sh', 'exe.pl', 'plopper.py',]]
 
+# Variables that will be sed-edited to control scaling
+APP_SCALE = 128
+NODE_SCALE = 1
 cs = CS.ConfigurationSpace(seed=1234)
 # arg1  precision
 p0 = CSH.CategoricalHyperparameter(name='p0', choices=["double", "float"], default_value="float")
@@ -111,9 +114,6 @@ if gpu_enabled:
     PPN = gpus
 else:
     PPN = 1
-# Variables that will be sed-edited to control scaling
-APP_SCALE = 128
-NODE_SCALE = 2
 print(f"APP_SCALE (AKA Problem Size X, X, X) = {APP_SCALE} x3")
 print(f"NODE_SCALE (AKA System Size X, Y) = {NODE_SCALE}, {PPN}")
 TOTAL_PROC = NODE_SCALE * PPN
@@ -217,15 +217,12 @@ if __name__ == '__main__':
                                 alloc_specs=alloc_specs, libE_specs=libE_specs)
     # Save History array to file
     if is_manager:
+        # We may have missed the final evaluation in the results file
         print("\nlibEnsemble has completed evaluations.")
-        #save_libE_output(H, persis_info, __file__, nworkers)
-
-        #print("\nSaving just sim_specs[['in','out']] to a CSV")
-        #H = np.load(glob.glob('*.npy')[0])
-        #H = H[H["sim_ended"]]
-        #H = H[H["returned"]]
-        #dtypes = H[gen_specs['persis_in']].dtype
-        #b = np.vstack(map(list, H[gen_specs['persis_in']]))
-        #print(b)
-        #np.savetxt('results.csv',b, header=','.join(dtypes.names), delimiter=',',fmt=','.join(['%s']*b.shape[1]))
+        import pandas as pd
+        H = H[H["sim_ended"]][gen_specs['persis_in']]
+        full_log = pd.DataFrame(dict((k,H[k].flatten()) for k in gen_specs['persis_in']))
+        final_output = f"{libE_specs['ensemble_dir_path']}/results.csv"
+        full_log.to_csv(final_output, index=False)
+        print(f"Full results logged to {final_output}")
 

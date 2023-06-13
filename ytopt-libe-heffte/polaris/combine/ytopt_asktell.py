@@ -63,7 +63,6 @@ def persistent_ytopt(H, persis_info, gen_specs, libE_info):
                     except Exception as e:
                         from inspect import currentframe
                         logger.warning(f"Field '{field_name}' with value '{entry}' produced exception {e.__class__} during persistent output in {__file__}:{currentframe().f_back.f_lineno}")
-                        #logger.info(f"Entry {entry} produced exception {e.__class__} during persistent output in {__file__}:{currentframe().f_back.f_lineno}")
                         b += [str(entry)]
 
                 # Drop in ensemble directory
