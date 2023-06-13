@@ -57,13 +57,13 @@ req_settings = ['learner','max-evals']
 assert all([opt in user_args for opt in req_settings]), \
     "Required settings missing. Specify each setting in " + str(req_settings)
 
-MACHINE_IDENTIFIER = "c357706l"
+MACHINE_IDENTIFIER = "polaris-gpu"
 print(f"Identifying machine as {MACHINE_IDENTIFIER}")
 # Set options so workers operate in unique directories
 here = os.getcwd() + '/'
 libE_specs['use_worker_dirs'] = True
 libE_specs['sim_dirs_make'] = False  # Otherwise directories separated by each sim call
-ENSEMBLE_DIR_PATH = "_f7cf21e5"
+ENSEMBLE_DIR_PATH = "libE_Scaling_4_debug"
 libE_specs['ensemble_dir_path'] = f'./ensemble_{ENSEMBLE_DIR_PATH}'
 print(f"This ensemble operates as: {libE_specs['ensemble_dir_path']}")
 
@@ -71,8 +71,8 @@ print(f"This ensemble operates as: {libE_specs['ensemble_dir_path']}")
 libE_specs['sim_dir_symlink_files'] = [here + f for f in ['speed3d.sh', 'exe.pl', 'plopper.py',]]
 
 # Variables that will be sed-edited to control scaling
-APP_SCALE = 128
-NODE_SCALE = 1
+APP_SCALE = 256
+NODE_SCALE = 8
 cs = CS.ConfigurationSpace(seed=1234)
 # arg1  precision
 p0 = CSH.CategoricalHyperparameter(name='p0', choices=["double", "float"], default_value="float")
@@ -166,6 +166,7 @@ sim_specs = {
             ('mpi_ranks', int, (1,)),
             ('ppn', int, (1,)),
             ('gpu_enabled', bool, (1,)),
+            ('libE_id', int, (1,)),
             ('libE_workers', int, (1,)),],
     'user': {
         'machine_info': MACHINE_INFO,
@@ -192,6 +193,7 @@ gen_specs = {
                  ['mpi_ranks'] +\
                  ['ppn'] +\
                  ['gpu_enabled'] +\
+                 ['libE_id'] +\
                  ['libE_workers'],
     'user': {
         'ytoptimizer': ytoptimizer,  # provide optimizer to generator function

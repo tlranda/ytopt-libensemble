@@ -29,6 +29,7 @@ def init_obj(H, persis_info, sim_specs, libE_info):
     H_o['mpi_ranks'] = [machine_info['mpi_ranks']]
     H_o['ppn'] = [machine_info['ppn']]
     H_o['gpu_enabled'] = [machine_info['gpu_enabled']]
+    H_o['libE_id'] = [libE_info['workerID']]
     H_o['libE_workers'] = [machine_info['libE_workers']]
 
     return H_o, persis_info

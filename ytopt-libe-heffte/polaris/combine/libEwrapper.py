@@ -1,5 +1,6 @@
 import subprocess
 import argparse
+import os, stat
 
 def build():
     parser = argparse.ArgumentParser()
@@ -161,10 +162,14 @@ echo;
     print(f"Produce job script {args.generated_script}")
     with open(args.generated_script, 'w') as f:
         f.write(job_contents)
+    # Set RWX for owner, RX for all others
+    os.chmod(args.generated_script, stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
     print("OK!")
     if args.launch_job:
         proc = subprocess.run(f"./{args.generated_script}")
+        migrated_job_script = f"./ensemble_{args.ensemble_dir_path[1:-1]}/{args.generated_script}"
+        os.rename(args.generated_script, migrated_job_script)
+        print("Job script migrated to ensemble directory")
         if proc.returncode == 0 and args.display_results:
             import pandas as pd
             print(pd.read_csv(f"./ensemble_{args.ensemble_dir_path[1:-1]}/results.csv"))
-
