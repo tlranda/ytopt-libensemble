@@ -1,10 +1,8 @@
-import os
-import sys
 import subprocess
 import random
-import psutil
 import numpy as np
 import warnings
+import os, stat, signal
 
 class Plopper:
     def __init__(self,sourcefile,outputdir):
@@ -40,9 +38,14 @@ class Plopper:
                 else:
                     #To avoid writing the Marker
                     f2.write(line)
+        # Ensure the script is executable!
+        os.chmod(outputfile,
+                 stat.S_IRWXU |
+                 stat.S_IRGRP | stat.S_IXGRP |
+                 stat.S_IROTH | stat.S_IXOTH)
 
     # Function to find the execution time of the interim file, and return the execution time as cost to the search module
-    def findRuntime(self, x, params, worker):
+    def findRuntime(self, x, params, worker, app_timeout, n_nodes, ppn, n_repeats):
         #print(worker, x, params)
         dictVal = self.createDict(x, params)
         #print(worker, dictVal)
@@ -57,12 +60,7 @@ class Plopper:
         #print(worker, cmd2)
 
         #Find the execution time
-        app_timeout = 300
-        n_nodes = 8
-        ppn = 4
-        n_repeats = 3
-
-        cmd = f"timeout {app_timeout} mpiexec -n {n_nodes} --ppn {ppn} --depth {dictVal['p9']} sh {interimfile}"
+        cmd = f"mpiexec -n {n_nodes} --ppn {ppn} --depth {dictVal['P9']} sh ./set_affinity_gpu_polaris.sh {interimfile}"
         print(worker,cmd)
         #exetime = float('inf')
         #exetime = sys.maxsize
@@ -70,7 +68,19 @@ class Plopper:
         results = []
         for attempt in range(n_repeats):
             this_log = f"{self.outputdir}/{counter}_{attempt}.log"
-            execution_status = subprocess.Popen(cmd, shell=True, stdout=this_log, stderr=this_log)
+            with open(this_log,"w") as logfile:
+                execution_status = subprocess.Popen(cmd, shell=True, stdout=logfile, stderr=logfile)
+                child_pid = execution_status.pid
+                try:
+                    execution_status.communicate(timeout=app_timeout)
+                except subprocess.TimeoutExpired:
+                    results.append(1.0)
+                    os.kill(child_pid, signal.SIGTERM)
+                    continue
+            if execution_status.returncode != 0:
+                results.append(2. + execution_status.returncode/1000)
+                warnings.warn("Evaluation had bad return code")
+                continue
             try:
                 with open(this_log,"r") as logged:
                     lines = [_.rstrip() for _ in logged.readlines()]
@@ -81,5 +91,11 @@ class Plopper:
                             break
             except Exception as e:
                 warnings.warn(f"Evaluation raised {e.__class__.__name__}: {e.args}")
-        return np.mean(results)
+        usable_results = [_ for _ in results if _ < 0]
+        if len(usable_results) > 0:
+            # Get the best result we observed (unstable measurements)
+            return min(usable_results)
+        else:
+            # Ensure the gravest error is reported
+            return max(results)
 

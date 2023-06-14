@@ -64,6 +64,9 @@ def parse(prs=None, args=None):
     if args.ensemble_dir_path == "":
         args.ensemble_dir_path = '"'
     args.ensemble_dir_path += '"' # close quote
+    # Environments
+    if args.configure_environment is None:
+        args.configure_environment = []
     # Machine identifier selection
     if args.machine_identifier is None:
         import platform
@@ -176,5 +179,11 @@ echo;
         print("Job script migrated to ensemble directory")
         if proc.returncode == 0 and args.display_results:
             import pandas as pd
+            print("Finished evaluations")
             print(pd.read_csv(f"./ensemble_{args.ensemble_dir_path[1:-1]}/results.csv"))
+            try:
+                print("Unfinished evaluations")
+                print(pd.read_csv(f"./ensemble_{args.ensemble_dir_path[1:-1]}/unfinished_results.csv"))
+            except:
+                print("No unfinished evaluations to view")
 

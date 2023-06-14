@@ -19,7 +19,7 @@ def init_obj(H, persis_info, sim_specs, libE_info):
     machine_info = sim_specs['user']['machine_info']
     point['machine_info'] = machine_info
 
-    y = myobj(point, sim_specs['in'], libE_info['workerID'])  # ytopt objective wants a dict
+    y = myobj(point, sim_specs['in'], libE_info['workerID']) # ytopt objective wants a dict
     H_o = np.zeros(len(sim_specs['out']), dtype=sim_specs['out'])
     H_o['FLOPS'] = y
     H_o['elapsed_sec'] = time.time() - start_time
@@ -52,8 +52,8 @@ def make_topology(budget: int) -> list[tuple[int,int,int]]:
     topology += [' ']
     return topology
 def topology_interpret(config: dict) -> dict:
-    machine_info = config.pop('machine_info') # Raises KeyError if not present
-    budget = machine_info['mpi_ranks'] * machine_info['ppn']
+    machine_info = config['machine_info']
+    budget = machine_info['mpi_ranks']
     if budget not in topology_cache.keys():
         topology_cache[budget] = make_topology(budget)
     topology = topology_cache[budget]
@@ -73,6 +73,7 @@ def topology_interpret(config: dict) -> dict:
 def myobj(point: dict, params: list, workerID: int) -> float:
     try:
         point = topology_interpret(point)
+        machine_info = point.pop('machine_info')
         print(f"Worker {workerID} receives point {point}")
         x = np.array([point[f'p{i}'] for i in range(len(point))])
         def plopper_func(x, params):
@@ -82,7 +83,12 @@ def myobj(point: dict, params: list, workerID: int) -> float:
             value = [point[param] for param in params]
             os.environ["OMP_NUM_THREADS"] = str(value[9])
             params = [i.upper() for i in params]
-            result = obj.findRuntime(value, params, workerID)
+            result = obj.findRuntime(value, params, workerID,
+                                     machine_info['app_timeout'],
+                                     machine_info['mpi_ranks'],
+                                     machine_info['ppn'],
+                                     3 # n_repeats
+                                     )
             return result
 
         results = plopper_func(x, params)

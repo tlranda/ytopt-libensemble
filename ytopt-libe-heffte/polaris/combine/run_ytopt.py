@@ -57,22 +57,10 @@ req_settings = ['learner','max-evals']
 assert all([opt in user_args for opt in req_settings]), \
     "Required settings missing. Specify each setting in " + str(req_settings)
 
-MACHINE_IDENTIFIER = "polaris-gpu"
-print(f"Identifying machine as {MACHINE_IDENTIFIER}")
-# Set options so workers operate in unique directories
-here = os.getcwd() + '/'
-libE_specs['use_worker_dirs'] = True
-libE_specs['sim_dirs_make'] = False  # Otherwise directories separated by each sim call
-ENSEMBLE_DIR_PATH = "libE_debug"
-libE_specs['ensemble_dir_path'] = f'./ensemble_{ENSEMBLE_DIR_PATH}'
-print(f"This ensemble operates as: {libE_specs['ensemble_dir_path']}")
-
-# Copy or symlink needed files into unique directories
-libE_specs['sim_dir_symlink_files'] = [here + f for f in ['speed3d.sh', 'exe.pl', 'plopper.py',]]
 
 # Variables that will be sed-edited to control scaling
-APP_SCALE = 256
-NODE_SCALE = 8
+APP_SCALE = 64
+NODE_SCALE = 4
 cs = CS.ConfigurationSpace(seed=1234)
 # arg1  precision
 p0 = CSH.CategoricalHyperparameter(name='p0', choices=["double", "float"], default_value="float")
@@ -91,18 +79,30 @@ p5 = CSH.CategoricalHyperparameter(name='p5', choices=["-pencils", "-slabs"," "]
 p6 = CSH.CategoricalHyperparameter(name='p6', choices=["-r2c_dir 0", "-r2c_dir 1","-r2c_dir 2", " "], default_value=" ")
 # arg8
 p7 = CSH.UniformFloatHyperparameter(name='p7', lower=0, upper=1)
-# arg9 
+# arg9
 p8 = CSH.UniformFloatHyperparameter(name='p8', lower=0, upper=1)
 # number of threads is hardware-dependent
+
+
 # Cross-architecture is out-of-scope for now so we determine this for the current platform and leave it at that
 proc = subprocess.run(['nproc'], capture_output=True)
-max_cpus = int(proc.stdout.decode('utf-8').strip())
-gpu_enabled = False
+if proc.returncode == 0:
+    max_cpus = int(proc.stdout.decode('utf-8').strip())
+else:
+    proc = subprocess.run(['lscpu'], capture_output=True)
+    for line in proc.stdout.decode('utf-8'):
+        if 'CPU(s):' in line:
+            max_cpus = int(line.rstrip().rsplit(' ',1)[1])
+            break
+print(f"Detected {max_cpus} CPUs on this machine")
+
+gpu_enabled = True
 if gpu_enabled:
     proc = subprocess.run('nvidia-smi -L'.split(' '), capture_output=True)
     if proc.returncode != 0:
         raise ValueError("No GPUs Detected, but in GPU mode")
     gpus = len(proc.stdout.decode('utf-8').strip().split('\n'))
+    print(f"Detected {gpus} GPUs on this machine")
     # Change exe.pl's PPN value (var named N_NODES) based on the system
     proc = subprocess.run(['sed', '-i',f's/N_NODES = [0-9]*/N_NODES = {gpus}/', 'exe.pl'], capture_output=True)
     if proc.returncode != 0:
@@ -113,12 +113,15 @@ if gpu_enabled:
         print(f"Node identified to have access to {max_cpus} cpus and {gpus} gpus")
     PPN = gpus
 else:
-    PPN = 1
+    PPN = 2
+print(f"Set PPN to {PPN}"+"\n")
+
+
+NODE_COUNT = NODE_SCALE // PPN
 print(f"APP_SCALE (AKA Problem Size X, X, X) = {APP_SCALE} x3")
-print(f"NODE_SCALE (AKA System Size X, Y) = {NODE_SCALE}, {PPN}")
-TOTAL_PROC = NODE_SCALE * PPN
+print(f"NODE_SCALE (AKA System Size X * Y = Z) = {NODE_COUNT} * {PPN} = {NODE_SCALE}")
 # Don't exceed #threads across total ranks
-max_depth = max_cpus // TOTAL_PROC
+max_depth = max_cpus // PPN
 sequence = [2**_ for _ in range(1,10) if (2**_) <= max_depth]
 if len(sequence) >= 2:
     intermediates = []
@@ -132,8 +135,8 @@ if len(sequence) >= 2:
 # Ensure max_depth is always in the list
 if np.log2(max_depth)-int(np.log2(max_depth)) > 0:
     sequence = sorted(sequence+[max_depth])
-print(f"Given {NODE_SCALE} nodes * {PPN} processes-per-node (={TOTAL_PROC}) and {max_cpus} CPUS on this node...")
-print(f"Selectable depths are: {sequence}")
+print(f"Given {NODE_COUNT} nodes * {PPN} processes-per-node (={NODE_SCALE}) and {max_cpus} CPUS on this node...")
+print(f"Selectable depths are: {sequence}"+"\n")
 # arg10 number threads per MPI process
 p9 = CSH.OrdinalHyperparameter(name='p9', sequence=sequence, default_value=max_depth)
 
@@ -149,12 +152,16 @@ ytoptimizer = Optimizer(
     set_SEED=2345,
     set_NI=10,
 )
+
+MACHINE_IDENTIFIER = "x3005c0s37b1n0"
+print(f"Identifying machine as {MACHINE_IDENTIFIER}"+"\n")
 MACHINE_INFO = {
     'identifier': MACHINE_IDENTIFIER,
     'mpi_ranks': NODE_SCALE,
     'ppn': PPN,
     'gpu_enabled': gpu_enabled,
     'libE_workers': num_sim_workers,
+    'app_timeout': 30,
 }
 
 # Declare the sim_f to be optimized, and the input/outputs
@@ -213,6 +220,16 @@ exit_criteria = {'sim_max': int(user_args['max-evals'])}
 
 # Added as a workaround to issue that's been resolved on develop
 persis_info = add_unique_random_streams({}, nworkers + 1)
+
+# Set options so workers operate in unique directories
+here = os.getcwd() + '/'
+libE_specs['use_worker_dirs'] = True
+libE_specs['sim_dirs_make'] = False  # Otherwise directories separated by each sim call
+# Copy or symlink needed files into unique directories
+libE_specs['sim_dir_symlink_files'] = [here + f for f in ['speed3d.sh', 'plopper.py', 'set_affinity_gpu_polaris.sh']]
+ENSEMBLE_DIR_PATH = "Scaling_2n_4g_4w_2e_adef709e"
+libE_specs['ensemble_dir_path'] = f'./ensemble_{ENSEMBLE_DIR_PATH}'
+print(f"This ensemble operates as: {libE_specs['ensemble_dir_path']}"+"\n")
 
 if __name__ == '__main__':
     # Perform the libE run
