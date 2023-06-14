@@ -77,7 +77,7 @@ def parse(prs=None, args=None):
     args.designated_sed = {
         'worker_nodes': [(args.exe_target, "s/N_NODES = [0-9]*;/N_NODES = {};/"),
                          (args.libensemble_target, "s/NODE_SCALE = [0-9]*/NODE_SCALE = {}/"),],
-        'worker_timeout': [(args.plopper_target, "s/app_timeout = [0-9]*/app_timeout = {}/")],
+        'worker_timeout': [(args.libensemble_target, "s/'app_timeout': [0-9]*,/'app_timeout': {},/")],
         'application_scale': [(args.libensemble_target, "s/APP_SCALE = [0-9]*/APP_SCALE = {}/")],
         'ensemble_dir_path': [(args.libensemble_target, "s/^ENSEMBLE_DIR_PATH = .*/ENSEMBLE_DIR_PATH = {}/")],
         'machine_identifier': [(args.libensemble_target, "s/MACHINE_IDENTIFIER = .*/MACHINE_IDENTIFIER = {}/")],
