@@ -3,6 +3,7 @@ import random
 import numpy as np
 import warnings
 import os, stat, signal
+import math
 
 class Plopper:
     def __init__(self,sourcefile,outputdir):
@@ -45,26 +46,29 @@ class Plopper:
                  stat.S_IROTH | stat.S_IXOTH)
 
     # Function to find the execution time of the interim file, and return the execution time as cost to the search module
-    def findRuntime(self, x, params, worker, app_timeout, n_nodes, ppn, n_repeats):
-        #print(worker, x, params)
+    def findRuntime(self, x, params, workerID, app_timeout, mpi_ranks, ranks_per_node, n_repeats=1):
+        #print(workerID, x, params)
         dictVal = self.createDict(x, params)
-        #print(worker, dictVal)
+        #print(workerID, dictVal)
 
         # Generate intermediate file
-        counter = random.randint(1, 10001) # To reduce collision increasing the sampling intervals
+        counter = random.randint(1, 10001) # Reduce collision at greater sampling intervals
         interimfile = f"{self.outputdir}/{counter}.sh"
         self.plotValues(dictVal, self.sourcefile, interimfile)
 
         kernel_dir = os.path.dirname(self.sourcefile)
-        #cmd2 = f"{kernel_dir}/exe.pl {dictVal['P9']} {interimfile}"
-        #print(worker, cmd2)
+        #print(workerID, cmd2)
 
-        #Find the execution time
-        cmd = f"mpiexec -n {n_nodes} --ppn {ppn} --depth {dictVal['P9']} sh ./set_affinity_gpu_polaris.sh {interimfile}"
-        print(worker,cmd)
-        #exetime = float('inf')
-        #exetime = sys.maxsize
-        #exetime = -1
+        #Find the execution metric
+        # POLARIS
+        #cmd = f"mpiexec -n {mpi_ranks} --ppn {ranks_per_node} --depth {dictVal['P9']} sh ./set_affinity_gpu_polaris.sh {interimfile}"
+        
+        # THETA KNL
+        # Divide and promote instead of truncate
+        j = math.ceil(dictVal['P9'] / 64)
+        cmd = f"aprun -n {mpi_ranks} -N {ranks_per_node} -cc depth -d {dictVal['P9']} -j {j} sh {interimfile}"
+        print(workerID,cmd)
+
         results = []
         for attempt in range(n_repeats):
             this_log = f"{self.outputdir}/{counter}_{attempt}.log"
@@ -79,7 +83,7 @@ class Plopper:
                     continue
             if execution_status.returncode != 0:
                 results.append(2. + execution_status.returncode/1000)
-                warnings.warn("Evaluation had bad return code")
+                warnings.warn(f"{workerID} evaluation had bad return code {results[-1]}")
                 continue
             try:
                 with open(this_log,"r") as logged:

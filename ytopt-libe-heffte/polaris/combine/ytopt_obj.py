@@ -27,7 +27,7 @@ def init_obj(H, persis_info, sim_specs, libE_info):
     # Passed back for processing in CSV records
     H_o['machine_identifier'] = [machine_info['identifier']]
     H_o['mpi_ranks'] = [machine_info['mpi_ranks']]
-    H_o['ppn'] = [machine_info['ppn']]
+    H_o['ranks_per_node'] = [machine_info['ranks_per_node']]
     H_o['gpu_enabled'] = [machine_info['gpu_enabled']]
     H_o['libE_id'] = [libE_info['workerID']]
     H_o['libE_workers'] = [machine_info['libE_workers']]
@@ -86,7 +86,7 @@ def myobj(point: dict, params: list, workerID: int) -> float:
             result = obj.findRuntime(value, params, workerID,
                                      machine_info['app_timeout'],
                                      machine_info['mpi_ranks'],
-                                     machine_info['ppn'],
+                                     machine_info['ranks_per_node'],
                                      3 # n_repeats
                                      )
             return result

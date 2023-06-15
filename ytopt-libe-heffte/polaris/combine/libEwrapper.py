@@ -6,12 +6,17 @@ def build():
     parser = argparse.ArgumentParser()
     #SCALING
     scaling = parser.add_argument_group("Scaling", "Arguments that control scale of evaluated tests")
-    scaling.add_argument("--worker-nodes", type=int, default=2,
-                        help="Number of MPI nodes each Worker uses (System Scale; default: %(default)s)")
+    scaling.add_argument("--mpi-ranks", type=int, default=2,
+                        help="Number of MPI ranks each Worker uses (System Scale; default: %(default)s)")
     scaling.add_argument("--worker-timeout", type=int, default=100,
                         help="Timeout for Worker subprocesses (default: %(default)s)")
     scaling.add_argument("--application-scale", type=int, choices=[64,128,256,512,1024], default=128,
                         help="Problem size to be optimized (default: %(default)s)")
+    # Polaris-*: 64
+    # Theta-KNL: 256
+    # Theta-GPU: 128
+    scaling.add_argument("--cpu-override", type=int, default=None,
+                        help="Override automatic CPU detection to set max_cpu value (default: Detect)")
     # ENSEMBLE
     ensemble = parser.add_argument_group("LibEnsemble", "Arguments that control libEnsemble behavior")
     ensemble.add_argument("--ensemble-workers", type=int, default=1,
@@ -38,8 +43,6 @@ def build():
                         help="Plopper that libEnsemble caller will use (default: %(default)s)")
     files.add_argument("--problem-target", type=str, default="problem.py",
                         help="Problem that libEnsemble caller will use (default: %(default)s)")
-    files.add_argument("--exe-target", type=str, default="exe.pl",
-                        help="Perl execution script that libEnsemble caller eventually gets to (default: %(default)s)")
     files.add_argument("--generated-script", type=str, default="qsub.batch",
                         help="Qsub script is written to this location, then executed (default: %(default)s)")
     files.add_argument("--display-results", action='store_true',
@@ -73,14 +76,18 @@ def parse(prs=None, args=None):
         args.machine_identifier = f'"{platform.node()}"'
     else:
         args.machine_identifier = f'"{args.machine_identifier}"'
+    if args.cpu_override is None:
+        args.cpu_override = "None"
+    else:
+        args.cpu_override = str(args.cpu_override)
     # Designated sed arguments
     args.designated_sed = {
-        'worker_nodes': [(args.exe_target, "s/N_NODES = [0-9]*;/N_NODES = {};/"),
-                         (args.libensemble_target, "s/NODE_SCALE = [0-9]*/NODE_SCALE = {}/"),],
+        'mpi_ranks': [(args.libensemble_target, "s/MPI_RANKS = [0-9]*/MPI_RANKS = {}/"),],
         'worker_timeout': [(args.libensemble_target, "s/'app_timeout': [0-9]*,/'app_timeout': {},/")],
         'application_scale': [(args.libensemble_target, "s/APP_SCALE = [0-9]*/APP_SCALE = {}/")],
         'ensemble_dir_path': [(args.libensemble_target, "s/^ENSEMBLE_DIR_PATH = .*/ENSEMBLE_DIR_PATH = {}/")],
         'machine_identifier': [(args.libensemble_target, "s/MACHINE_IDENTIFIER = .*/MACHINE_IDENTIFIER = {}/")],
+        'cpu_override': [(args.libensemble_target, "s/cpu_override = .*/cpu_override = {}/")],
     }
     return args
 
@@ -126,7 +133,7 @@ export IBV_FORK_SAFE=1; # May fix some MPI issues where processes call fork()
     env_adjust = "\n".join([known_environments[env] for env in args.configure_environment])
     job_contents = f"""#!/bin/bash -x
 #PBS -l walltime=01:00:00
-#PBS -l select={1+(args.worker_nodes*args.ensemble_workers)}:system=polaris
+#PBS -l select={1+(args.mpi_ranks*args.ensemble_workers)}:system=polaris
 #PBS -l filesystems=home:grand:eagle
 #PBS -A EE-ECP
 #PBS -q prod
@@ -141,7 +148,7 @@ echo;
 
 # To be run with central job management
 # - Manager and workers run on launch node.
-# - Workers submit tasks to the nodes in the job available (using exe.pl)
+# - Workers submit tasks to the nodes in the job available via scheduler (mpirun, aprun, etc) in plopper
 
 # Name of calling script
 export EXE={args.libensemble_target}

@@ -60,7 +60,7 @@ assert all([opt in user_args for opt in req_settings]), \
 
 # Variables that will be sed-edited to control scaling
 APP_SCALE = 64
-NODE_SCALE = 4
+MPI_RANKS = 2
 cs = CS.ConfigurationSpace(seed=1234)
 # arg1  precision
 p0 = CSH.CategoricalHyperparameter(name='p0', choices=["double", "float"], default_value="float")
@@ -85,43 +85,42 @@ p8 = CSH.UniformFloatHyperparameter(name='p8', lower=0, upper=1)
 
 
 # Cross-architecture is out-of-scope for now so we determine this for the current platform and leave it at that
-proc = subprocess.run(['nproc'], capture_output=True)
-if proc.returncode == 0:
-    max_cpus = int(proc.stdout.decode('utf-8').strip())
+cpu_override = 256
+if cpu_override is None:
+    proc = subprocess.run(['nproc'], capture_output=True)
+    if proc.returncode == 0:
+        threads_per_node = int(proc.stdout.decode('utf-8').strip())
+    else:
+        proc = subprocess.run(['lscpu'], capture_output=True)
+        for line in proc.stdout.decode('utf-8'):
+            if 'CPU(s):' in line:
+                threads_per_node = int(line.rstrip().rsplit(' ',1)[1])
+                break
+    print(f"Detected {threads_per_node} CPU threads on this machine")
 else:
-    proc = subprocess.run(['lscpu'], capture_output=True)
-    for line in proc.stdout.decode('utf-8'):
-        if 'CPU(s):' in line:
-            max_cpus = int(line.rstrip().rsplit(' ',1)[1])
-            break
-print(f"Detected {max_cpus} CPUs on this machine")
+    threads_per_node = cpu_override
+    print(f"Override indicates {threads_per_node} CPU threads on this machine")
 
-gpu_enabled = True
+gpu_enabled = False
 if gpu_enabled:
     proc = subprocess.run('nvidia-smi -L'.split(' '), capture_output=True)
     if proc.returncode != 0:
         raise ValueError("No GPUs Detected, but in GPU mode")
     gpus = len(proc.stdout.decode('utf-8').strip().split('\n'))
     print(f"Detected {gpus} GPUs on this machine")
-    # Change exe.pl's PPN value (var named N_NODES) based on the system
-    proc = subprocess.run(['sed', '-i',f's/N_NODES = [0-9]*/N_NODES = {gpus}/', 'exe.pl'], capture_output=True)
-    if proc.returncode != 0:
-        print(proc.stdout.decode('utf-8'))
-        print(proc.stderr.decode('utf-8'))
-        raise ValueError("sed Substitution for 'PPN' in 'exe.pl' Failed")
-    else:
-        print(f"Node identified to have access to {max_cpus} cpus and {gpus} gpus")
-    PPN = gpus
+    ranks_per_node = gpus
 else:
-    PPN = 2
-print(f"Set PPN to {PPN}"+"\n")
+    # CPU only uses ONE process per node, scales across hw threads and additional nodes
+    ranks_per_node = 1
+    print("CPU mode; limit ONE rank per node")
+print(f"Set ranks_per_node to {ranks_per_node}"+"\n")
 
 
-NODE_COUNT = NODE_SCALE // PPN
+NODE_COUNT = max(MPI_RANKS // ranks_per_node,1)
 print(f"APP_SCALE (AKA Problem Size X, X, X) = {APP_SCALE} x3")
-print(f"NODE_SCALE (AKA System Size X * Y = Z) = {NODE_COUNT} * {PPN} = {NODE_SCALE}")
+print(f"MPI_RANKS (AKA System Size X * Y = Z) = {NODE_COUNT} * {ranks_per_node} = {MPI_RANKS}")
 # Don't exceed #threads across total ranks
-max_depth = max_cpus // PPN
+max_depth = threads_per_node // ranks_per_node
 sequence = [2**_ for _ in range(1,10) if (2**_) <= max_depth]
 if len(sequence) >= 2:
     intermediates = []
@@ -135,7 +134,7 @@ if len(sequence) >= 2:
 # Ensure max_depth is always in the list
 if np.log2(max_depth)-int(np.log2(max_depth)) > 0:
     sequence = sorted(sequence+[max_depth])
-print(f"Given {NODE_COUNT} nodes * {PPN} processes-per-node (={NODE_SCALE}) and {max_cpus} CPUS on this node...")
+print(f"Depths are based on {threads_per_node} threads on each node, shared across {ranks_per_node} MPI ranks on each node")
 print(f"Selectable depths are: {sequence}"+"\n")
 # arg10 number threads per MPI process
 p9 = CSH.OrdinalHyperparameter(name='p9', sequence=sequence, default_value=max_depth)
@@ -153,15 +152,15 @@ ytoptimizer = Optimizer(
     set_NI=10,
 )
 
-MACHINE_IDENTIFIER = "x3005c0s37b1n0"
+MACHINE_IDENTIFIER = "theta-knl"
 print(f"Identifying machine as {MACHINE_IDENTIFIER}"+"\n")
 MACHINE_INFO = {
     'identifier': MACHINE_IDENTIFIER,
-    'mpi_ranks': NODE_SCALE,
-    'ppn': PPN,
+    'mpi_ranks': MPI_RANKS,
+    'ranks_per_node': ranks_per_node,
     'gpu_enabled': gpu_enabled,
     'libE_workers': num_sim_workers,
-    'app_timeout': 30,
+    'app_timeout': 100,
 }
 
 # Declare the sim_f to be optimized, and the input/outputs
@@ -172,7 +171,7 @@ sim_specs = {
             ('elapsed_sec', float, (1,)),
             ('machine_identifier','<U30', (1,)),
             ('mpi_ranks', int, (1,)),
-            ('ppn', int, (1,)),
+            ('ranks_per_node', int, (1,)),
             ('gpu_enabled', bool, (1,)),
             ('libE_id', int, (1,)),
             ('libE_workers', int, (1,)),],
@@ -199,7 +198,7 @@ gen_specs = {
                  ['elapsed_sec'] +\
                  ['machine_identifier'] +\
                  ['mpi_ranks'] +\
-                 ['ppn'] +\
+                 ['ranks_per_node'] +\
                  ['gpu_enabled'] +\
                  ['libE_id'] +\
                  ['libE_workers'],
@@ -227,8 +226,10 @@ libE_specs['use_worker_dirs'] = True
 libE_specs['sim_dirs_make'] = False  # Otherwise directories separated by each sim call
 # Copy or symlink needed files into unique directories
 libE_specs['sim_dir_symlink_files'] = [here + f for f in ['speed3d.sh', 'plopper.py', 'set_affinity_gpu_polaris.sh']]
-ENSEMBLE_DIR_PATH = "Scaling_2n_4g_4w_2e_adef709e"
+ENSEMBLE_DIR_PATH = "theta-test_dbe801c1"
 libE_specs['ensemble_dir_path'] = f'./ensemble_{ENSEMBLE_DIR_PATH}'
+#if you need to manually specify resource information, ie:
+#    libE_specs['resource_info'] = {'cores_on_node': (64,256), 'gpus_on_node': 0}
 print(f"This ensemble operates as: {libE_specs['ensemble_dir_path']}"+"\n")
 
 if __name__ == '__main__':
