@@ -114,7 +114,7 @@ else:
     ranks_per_node = 1
     print("CPU mode; limit ONE rank per node")
 print(f"Set ranks_per_node to {ranks_per_node}"+"\n")
-
+c0 = CSH.Constant('c0', value='cufftw' if gpu_enabled else 'fftw')
 
 NODE_COUNT = max(MPI_RANKS // ranks_per_node,1)
 print(f"APP_SCALE (AKA Problem Size X, X, X) = {APP_SCALE} x3")
@@ -139,7 +139,7 @@ print(f"Selectable depths are: {sequence}"+"\n")
 # arg10 number threads per MPI process
 p9 = CSH.OrdinalHyperparameter(name='p9', sequence=sequence, default_value=max_depth)
 
-cs.add_hyperparameters([p0, p1, p2, p3, p4, p5, p6, p7, p8, p9])
+cs.add_hyperparameters([p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, c0])
 
 ytoptimizer = Optimizer(
     num_workers=num_sim_workers,
@@ -160,13 +160,13 @@ MACHINE_INFO = {
     'ranks_per_node': ranks_per_node,
     'gpu_enabled': gpu_enabled,
     'libE_workers': num_sim_workers,
-    'app_timeout': 100,
+    'app_timeout': 300,
 }
 
 # Declare the sim_f to be optimized, and the input/outputs
 sim_specs = {
     'sim_f': init_obj,
-    'in': [f'p{_}' for _ in range(10)],
+    'in': [f'p{_}' for _ in range(10)] + ['c0'],
     'out': [('FLOPS', float, (1,)),
             ('elapsed_sec', float, (1,)),
             ('machine_identifier','<U30', (1,)),
@@ -192,7 +192,8 @@ gen_specs = {
             ('p6', "<U24", (1,)),
             ('p7', float, (1,)),
             ('p8', float, (1,)),
-            ('p9', int, (1,))],
+            ('p9', int, (1,)),
+            ('c0', "<U24", (1,)),],
     'persis_in': sim_specs['in'] +\
                  ['FLOPS'] +\
                  ['elapsed_sec'] +\
@@ -226,7 +227,7 @@ libE_specs['use_worker_dirs'] = True
 libE_specs['sim_dirs_make'] = False  # Otherwise directories separated by each sim call
 # Copy or symlink needed files into unique directories
 libE_specs['sim_dir_symlink_files'] = [here + f for f in ['speed3d.sh', 'plopper.py', 'set_affinity_gpu_polaris.sh']]
-ENSEMBLE_DIR_PATH = "theta-test_dbe801c1"
+ENSEMBLE_DIR_PATH = "Scaling_1_bad9e700"
 libE_specs['ensemble_dir_path'] = f'./ensemble_{ENSEMBLE_DIR_PATH}'
 #if you need to manually specify resource information, ie:
 #    libE_specs['resource_info'] = {'cores_on_node': (64,256), 'gpus_on_node': 0}

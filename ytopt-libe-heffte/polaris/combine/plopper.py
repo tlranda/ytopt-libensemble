@@ -6,12 +6,16 @@ import os, stat, signal
 import math
 
 class Plopper:
-    def __init__(self,sourcefile,outputdir):
+    def __init__(self,sourcefile,outputdir,formatSTR=None):
         # Initilizing global variables
         self.sourcefile = sourcefile
         self.outputdir = outputdir+"/tmp_files"
         if not os.path.exists(self.outputdir):
             os.makedirs(self.outputdir)
+        if formatSTR is None:
+            self.cmd_template = "mpiexec -n {mpi_ranks} --ppn {ranks_per_node} --depth {depth} sh ./set_affinity_gpu_polaris.sh {interimfile}"
+        else:
+            self.cmd_template = formatSTR
 
     #Creating a dictionary using parameter label and value
     def createDict(self, x, params):
@@ -60,14 +64,12 @@ class Plopper:
         #print(workerID, cmd2)
 
         #Find the execution metric
-        # POLARIS
-        #cmd = f"mpiexec -n {mpi_ranks} --ppn {ranks_per_node} --depth {dictVal['P9']} sh ./set_affinity_gpu_polaris.sh {interimfile}"
-        
-        # THETA KNL
         # Divide and promote instead of truncate
         j = math.ceil(dictVal['P9'] / 64)
-        cmd = f"aprun -n {mpi_ranks} -N {ranks_per_node} -cc depth -d {dictVal['P9']} -j {j} sh {interimfile}"
-        print(workerID,cmd)
+        cmd = self.cmd_template.format(mpi_ranks=mpi_ranks, ranks_per_node=ranks_per_node, depth=dictVal['P9'], j=j, interimfile=interimfile)
+        #cmd = f"mpiexec -n {mpi_ranks} --ppn {ranks_per_node} --depth {dictVal['P9']} sh ./set_affinity_gpu_polaris.sh {interimfile}"
+        #cmd = f"aprun -n {mpi_ranks} -N {ranks_per_node} -cc depth -d {dictVal['P9']} -j {j} sh {interimfile}"
+        print(f"[worker {workerID}] runs: {cmd}")
 
         results = []
         for attempt in range(n_repeats):
@@ -79,11 +81,13 @@ class Plopper:
                     execution_status.communicate(timeout=app_timeout)
                 except subprocess.TimeoutExpired:
                     results.append(1.0)
+                    print(f"[worker {workerID}] receives: TIMEOUT {results[-1]}")
                     os.kill(child_pid, signal.SIGTERM)
                     continue
             if execution_status.returncode != 0:
                 results.append(2. + execution_status.returncode/1000)
                 warnings.warn(f"{workerID} evaluation had bad return code {results[-1]}")
+                print(f"[worker {workerID}] receives: ERROR {execution_status.returncode}")
                 continue
             try:
                 with open(this_log,"r") as logged:
@@ -92,6 +96,7 @@ class Plopper:
                         if "Performance: " in line:
                             split = [_ for _ in line.split(' ') if len(_) > 0]
                             results.append(-1 * float(split[1]))
+                            print(f"[worker {workerID}] receives: OK {results[-1]}")
                             break
             except Exception as e:
                 warnings.warn(f"Evaluation raised {e.__class__.__name__}: {e.args}")

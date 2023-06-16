@@ -17,6 +17,8 @@ def build():
     # Theta-GPU: 128
     scaling.add_argument("--cpu-override", type=int, default=None,
                         help="Override automatic CPU detection to set max_cpu value (default: Detect)")
+    scaling.add_argument("--gpu-enabled", action="store_true",
+                        help="Enable GPU treatment for libensemble (default: Disabled)")
     # ENSEMBLE
     ensemble = parser.add_argument_group("LibEnsemble", "Arguments that control libEnsemble behavior")
     ensemble.add_argument("--ensemble-workers", type=int, default=1,
@@ -80,6 +82,7 @@ def parse(prs=None, args=None):
         args.cpu_override = "None"
     else:
         args.cpu_override = str(args.cpu_override)
+    args.gpu_enabled = str(args.gpu_enabled)
     # Designated sed arguments
     args.designated_sed = {
         'mpi_ranks': [(args.libensemble_target, "s/MPI_RANKS = [0-9]*/MPI_RANKS = {}/"),],
@@ -88,6 +91,7 @@ def parse(prs=None, args=None):
         'ensemble_dir_path': [(args.libensemble_target, "s/^ENSEMBLE_DIR_PATH = .*/ENSEMBLE_DIR_PATH = {}/")],
         'machine_identifier': [(args.libensemble_target, "s/MACHINE_IDENTIFIER = .*/MACHINE_IDENTIFIER = {}/")],
         'cpu_override': [(args.libensemble_target, "s/cpu_override = .*/cpu_override = {}/")],
+        'gpu_enabled': [(args.libensemble_target, "s/gpu_enabled = .*/gpu_enabled = {}/")],
     }
     return args
 

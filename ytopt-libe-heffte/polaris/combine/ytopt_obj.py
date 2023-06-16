@@ -74,11 +74,17 @@ def myobj(point: dict, params: list, workerID: int) -> float:
     try:
         point = topology_interpret(point)
         machine_info = point.pop('machine_info')
+        if 'polaris' in machine_info['identifier']:
+            machine_format_str = "mpiexec -n {mpi_ranks} --ppn {ranks_per_node} --depth {depth} sh ./set_affinity_gpu_polarish.sh {interimfile}"
+        elif 'theta' in machine_info['identifier']:
+            machine_format_str = "aprun -n {mpi_ranks} -N {ranks_per_node} -cc depth -d {depth} -j {j} sh {interimfile}"
+        else:
+            machine_format_str = None
         print(f"Worker {workerID} receives point {point}")
-        x = np.array([point[f'p{i}'] for i in range(len(point))])
+        x = np.array(point.values())
         def plopper_func(x, params):
             # Should utilize machine identifier
-            obj = Plopper('./speed3d.sh', './')
+            obj = Plopper('./speed3d.sh', './', machine_format_str)
             x = np.asarray_chkfinite(x)
             value = [point[param] for param in params]
             os.environ["OMP_NUM_THREADS"] = str(value[9])
