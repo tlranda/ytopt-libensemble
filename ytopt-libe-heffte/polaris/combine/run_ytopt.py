@@ -59,8 +59,8 @@ assert all([opt in user_args for opt in req_settings]), \
 
 
 # Variables that will be sed-edited to control scaling
-APP_SCALE = 64
-MPI_RANKS = 2
+APP_SCALE = 128
+MPI_RANKS = 16
 cs = CS.ConfigurationSpace(seed=1234)
 # arg1  precision
 p0 = CSH.CategoricalHyperparameter(name='p0', choices=["double", "float"], default_value="float")
@@ -85,7 +85,7 @@ p8 = CSH.UniformFloatHyperparameter(name='p8', lower=0, upper=1)
 
 
 # Cross-architecture is out-of-scope for now so we determine this for the current platform and leave it at that
-cpu_override = 256
+cpu_override = None
 if cpu_override is None:
     proc = subprocess.run(['nproc'], capture_output=True)
     if proc.returncode == 0:
@@ -101,7 +101,7 @@ else:
     threads_per_node = cpu_override
     print(f"Override indicates {threads_per_node} CPU threads on this machine")
 
-gpu_enabled = False
+gpu_enabled = True
 if gpu_enabled:
     proc = subprocess.run('nvidia-smi -L'.split(' '), capture_output=True)
     if proc.returncode != 0:
@@ -114,7 +114,7 @@ else:
     ranks_per_node = 1
     print("CPU mode; limit ONE rank per node")
 print(f"Set ranks_per_node to {ranks_per_node}"+"\n")
-c0 = CSH.Constant('c0', value='cufftw' if gpu_enabled else 'fftw')
+c0 = CSH.Constant('c0', value='cufft' if gpu_enabled else 'fftw')
 
 NODE_COUNT = max(MPI_RANKS // ranks_per_node,1)
 print(f"APP_SCALE (AKA Problem Size X, X, X) = {APP_SCALE} x3")
@@ -152,7 +152,7 @@ ytoptimizer = Optimizer(
     set_NI=10,
 )
 
-MACHINE_IDENTIFIER = "theta-knl"
+MACHINE_IDENTIFIER = "polaris-gpu"
 print(f"Identifying machine as {MACHINE_IDENTIFIER}"+"\n")
 MACHINE_INFO = {
     'identifier': MACHINE_IDENTIFIER,
@@ -160,7 +160,7 @@ MACHINE_INFO = {
     'ranks_per_node': ranks_per_node,
     'gpu_enabled': gpu_enabled,
     'libE_workers': num_sim_workers,
-    'app_timeout': 300,
+    'app_timeout': 100,
 }
 
 # Declare the sim_f to be optimized, and the input/outputs
@@ -183,7 +183,10 @@ sim_specs = {
 # Declare the gen_f that will generate points for the sim_f, and the various input/outputs
 gen_specs = {
     'gen_f': persistent_ytopt,
-    'out': [('p0', "<U24", (1,)),
+    'out': [
+            # MUST MATCH ORDER OF THE CONFIGSPACE HYPERPARAMETERS EXACTLY
+            ('c0', "<U24", (1,)),
+            ('p0', "<U24", (1,)),
             ('p1', int, (1,)),
             ('p2', "<U24", (1,)),
             ('p3', "<U24", (1,)),
@@ -193,7 +196,7 @@ gen_specs = {
             ('p7', float, (1,)),
             ('p8', float, (1,)),
             ('p9', int, (1,)),
-            ('c0', "<U24", (1,)),],
+            ],
     'persis_in': sim_specs['in'] +\
                  ['FLOPS'] +\
                  ['elapsed_sec'] +\
@@ -227,7 +230,7 @@ libE_specs['use_worker_dirs'] = True
 libE_specs['sim_dirs_make'] = False  # Otherwise directories separated by each sim call
 # Copy or symlink needed files into unique directories
 libE_specs['sim_dir_symlink_files'] = [here + f for f in ['speed3d.sh', 'plopper.py', 'set_affinity_gpu_polaris.sh']]
-ENSEMBLE_DIR_PATH = "Scaling_1_bad9e700"
+ENSEMBLE_DIR_PATH = "debug-polaris_6ec033b5"
 libE_specs['ensemble_dir_path'] = f'./ensemble_{ENSEMBLE_DIR_PATH}'
 #if you need to manually specify resource information, ie:
 #    libE_specs['resource_info'] = {'cores_on_node': (64,256), 'gpus_on_node': 0}

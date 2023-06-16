@@ -75,12 +75,12 @@ def myobj(point: dict, params: list, workerID: int) -> float:
         point = topology_interpret(point)
         machine_info = point.pop('machine_info')
         if 'polaris' in machine_info['identifier']:
-            machine_format_str = "mpiexec -n {mpi_ranks} --ppn {ranks_per_node} --depth {depth} sh ./set_affinity_gpu_polarish.sh {interimfile}"
+            machine_format_str = "mpiexec -n {mpi_ranks} --ppn {ranks_per_node} --depth {depth} sh ./set_affinity_gpu_polaris.sh {interimfile}"
         elif 'theta' in machine_info['identifier']:
             machine_format_str = "aprun -n {mpi_ranks} -N {ranks_per_node} -cc depth -d {depth} -j {j} sh {interimfile}"
         else:
             machine_format_str = None
-        print(f"Worker {workerID} receives point {point}")
+        print(f"[worker {workerID} - obj] receives point {point}")
         x = np.array(point.values())
         def plopper_func(x, params):
             # Should utilize machine identifier
@@ -93,13 +93,13 @@ def myobj(point: dict, params: list, workerID: int) -> float:
                                      machine_info['app_timeout'],
                                      machine_info['mpi_ranks'],
                                      machine_info['ranks_per_node'],
-                                     3 # n_repeats
+                                     1 # n_repeats
                                      )
             return result
 
         results = plopper_func(x, params)
         # print('CONFIG and OUTPUT', [point, results], flush=True)
-        print(f"Worker {workerID} returns point {results}")
+        print(f"[worker {workerID} - obj] returns point {results}")
         return results
     except Exception as e:
         bonus_context = f"point: {point} | params: {params} | workerID: {workerID} | "
