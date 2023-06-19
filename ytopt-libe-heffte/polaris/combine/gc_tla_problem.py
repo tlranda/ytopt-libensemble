@@ -1,5 +1,7 @@
 from GC_TLA.base_problem import libe_problem_builder
+from GC_TLA.base_plopper import LibE_Plopper
 import os, subprocess, numpy as np
+import itertools
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 input_space = [('Categorical',
@@ -66,6 +68,11 @@ input_space = [('Categorical',
                  'default_value': 8,
                 }
                ),
+               ('Constant',
+                {'name': 'c0',
+                 'value': 'cufft',
+                }
+               ),
               ]
 
 def customize_space(self):
@@ -95,9 +102,11 @@ def customize_space(self):
         self.gpus = len(proc.stdout.decode('utf-8').strip().split('\n'))
         print(f"Detected {self.gpus} GPUs on this machine")
         self.ppn = self.gpus
+        altered_space[10] = ('Constant', {'name': 'c0', 'value': 'cufft'})
     else:
         self.gpus = 0
-        self.ppn = 2
+        self.ppn = 1
+        altered_space[10] = ('Constant', {'name': 'c0', 'value': 'fftw'})
     print(f"Set PPN to {self.ppn}"+"\n")
 
     self.node_count = self.node_scale // self.ppn
@@ -128,8 +137,63 @@ APP_SCALE_NAMES = ['N','S','M','L','XL']
 NODE_SCALES = [2,4,6,8]
 lookup_ival = dict(((k1,k2),f"{v2}_{k1}") for (k2,v2) in zip(APP_SCALES, APP_SCALE_NAMES) for k1 in NODE_SCALES)
 
+# Introduce the post-sampling space alteration for scale
+class heffte_plopper(LibE_Plopper):
+    candidate_orders = [_ for _ in itertools.product([0,1,2], repeat=3) if len(_) == len(set(_))]
+    topology_keymap = {'P7': '-ingrid', 'P8': '-outgrid'}
+    topology_cache = {}
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.mpi_ranks = 1 if 'mpi_ranks' not in kwargs else kwargs['mpi_ranks']
+
+    def make_topology(self, budget: int) -> list[tuple[int,int,int]]:
+        # Powers of 2 that can be represented in topology X/Y/Z
+        factors = [2 ** x for x in range(int(np.log2(budget)),-1,-1)]
+        topology = []
+        for candidate in itertools.product(factors, repeat=3):
+            # All topologies need to have product that == budget
+            # Reordering the topology is not considered a relevant difference, so reorderings are discarded
+            if np.prod(candidate) != budget or \
+               np.any([tuple([candidate[_] for _ in order]) in topology for order in self.candidate_orders]):
+                continue
+            topology.append(candidate)
+        # Add the null space
+        topology += [' ']
+        return topology
+
+    def topology_interpret(self, config: dict) -> dict:
+        machine_info = config['machine_info']
+        budget = machine_info['mpi_ranks']
+        if budget not in self.topology_cache.keys():
+            self.topology_cache[budget] = self.make_topology(budget)
+        topology = self.topology_cache[budget]
+        # Replace each key with uniform bucketized value
+        for topology_key in self.topology_keymap.keys():
+            selection = min(int(float(config[topology_key]) * len(topology)), len(topology)-1)
+            selected_topology = topology[selection]
+            if type(selected_topology) is not str:
+                selected_topology = f"{self.topology_keymap[topology_key]} {' '.join([str(_) for _ in selected_topology])}"
+            config[topology_key] = selected_topology
+        # Fix numpy zero-dimensional
+        for k,v in config.items():
+            if k not in self.topology_keymap.keys() and type(v) is np.ndarray and v.shape == ():
+                config[k] = v.tolist()
+        return config
+
+    def createDict(self, x, params, *args, **kwargs):
+        dictVal = {}
+        for p, v in zip(params, x):
+            if type(v) is np.ndarray and v.shape == ():
+                v = v.tolist()
+            dictVal[p] = v
+        dictVal.setdefault('machine_info', {'mpi_ranks': self.mpi_ranks})
+        dictVal = self.topology_interpret(dictVal)
+        return dictVal
+
+
 import pdb
-pdb.set_trace()
+#pdb.set_trace()
 __getattr__ = libe_problem_builder(lookup_ival, input_space, HERE, name='heFFTe_Problem',
-                                    customize_space=customize_space)
+                                    customize_space=customize_space, plopper_class=heffte_plopper)
 
