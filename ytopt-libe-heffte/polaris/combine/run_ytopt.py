@@ -12,6 +12,8 @@ The number of concurrent evaluations of the objective function will be 4-1=3.
 import os
 import glob
 import numpy as np
+NUMPY_SEED = 1
+np.random.seed(NUMPY_SEED)
 import itertools
 import subprocess
 
@@ -59,9 +61,12 @@ assert all([opt in user_args for opt in req_settings]), \
 
 
 # Variables that will be sed-edited to control scaling
-APP_SCALE = 128
-MPI_RANKS = 16
-cs = CS.ConfigurationSpace(seed=1234)
+APP_SCALE = 64
+MPI_RANKS = 1
+# SEEDING
+CONFIGSPACE_SEED = 1234
+YTOPT_SEED = 2345
+cs = CS.ConfigurationSpace(seed=CONFIGSPACE_SEED)
 # arg1  precision
 p0 = CSH.CategoricalHyperparameter(name='p0', choices=["double", "float"], default_value="float")
 # arg2  3D array dimension size
@@ -85,7 +90,7 @@ p8 = CSH.UniformFloatHyperparameter(name='p8', lower=0, upper=1)
 
 
 # Cross-architecture is out-of-scope for now so we determine this for the current platform and leave it at that
-cpu_override = None
+cpu_override = 256
 if cpu_override is None:
     proc = subprocess.run(['nproc'], capture_output=True)
     if proc.returncode == 0:
@@ -101,7 +106,7 @@ else:
     threads_per_node = cpu_override
     print(f"Override indicates {threads_per_node} CPU threads on this machine")
 
-gpu_enabled = True
+gpu_enabled = False
 if gpu_enabled:
     proc = subprocess.run('nvidia-smi -L'.split(' '), capture_output=True)
     if proc.returncode != 0:
@@ -148,11 +153,11 @@ ytoptimizer = Optimizer(
     liar_strategy='cl_max',
     acq_func='gp_hedge',
     set_KAPPA=1.96,
-    set_SEED=2345,
+    set_SEED=YTOPT_SEED,
     set_NI=10,
 )
 
-MACHINE_IDENTIFIER = "polaris-gpu"
+MACHINE_IDENTIFIER = "theta-knl"
 print(f"Identifying machine as {MACHINE_IDENTIFIER}"+"\n")
 MACHINE_INFO = {
     'identifier': MACHINE_IDENTIFIER,
@@ -160,7 +165,7 @@ MACHINE_INFO = {
     'ranks_per_node': ranks_per_node,
     'gpu_enabled': gpu_enabled,
     'libE_workers': num_sim_workers,
-    'app_timeout': 100,
+    'app_timeout': 20,
 }
 
 # Declare the sim_f to be optimized, and the input/outputs
@@ -230,11 +235,29 @@ libE_specs['use_worker_dirs'] = True
 libE_specs['sim_dirs_make'] = False  # Otherwise directories separated by each sim call
 # Copy or symlink needed files into unique directories
 libE_specs['sim_dir_symlink_files'] = [here + f for f in ['speed3d.sh', 'plopper.py', 'set_affinity_gpu_polaris.sh']]
-ENSEMBLE_DIR_PATH = "debug-polaris_6ec033b5"
+ENSEMBLE_DIR_PATH = "ThetaScaling_debug_4_ab15caa4"
 libE_specs['ensemble_dir_path'] = f'./ensemble_{ENSEMBLE_DIR_PATH}'
 #if you need to manually specify resource information, ie:
 #    libE_specs['resource_info'] = {'cores_on_node': (64,256), 'gpus_on_node': 0}
 print(f"This ensemble operates as: {libE_specs['ensemble_dir_path']}"+"\n")
+
+def manager_save(H, gen_specs, libE_specs):
+    import pandas as pd
+    unfinished = H[~H["sim_ended"]][gen_specs['persis_in']]
+    finished = H[H["sim_ended"]][gen_specs['persis_in']]
+    unfinished_log = pd.DataFrame(dict((k, unfinished[k].flatten()) for k in gen_specs['persis_in']))
+    full_log = pd.DataFrame(dict((k, finished[k].flatten()) for k in gen_specs['persis_in']))
+
+    output = f"{libE_specs['ensemble_dir_path']}/unfinished_results.csv"
+    if len(unfinished_log) == 0:
+        print("All simulations finished.")
+    else:
+        unfinished_log.to_csv(output, index=False)
+        print(f"{len(unfinished_log)} unfinished results logged to {output}")
+
+    output = f"{libE_specs['ensemble_dir_path']}/manager_results.csv"
+    full_log.to_csv(output, index=False)
+    print(f"All manager-finished results logged to {output}")
 
 if __name__ == '__main__':
     # Perform the libE run
@@ -244,19 +267,5 @@ if __name__ == '__main__':
     if is_manager:
         # We may have missed the final evaluation in the results file
         print("\nlibEnsemble has completed evaluations.")
-        import pandas as pd
-        unfinished = H[~H["sim_ended"]][gen_specs['persis_in']]
-        unfinished_log = pd.DataFrame(dict((k, unfinished[k].flatten()) for k in gen_specs['persis_in']))
-        final_output = f"{libE_specs['ensemble_dir_path']}/unfinished_results.csv"
-        if len(unfinished_log) == 0:
-            print("All simulations finished.")
-        else:
-            unfinished_log.to_csv(final_output, index=False)
-            print(f"{len(unfinished_log)} unfinished results logged to {final_output}")
-
-        finished = H[H["sim_ended"]][gen_specs['persis_in']]
-        full_log = pd.DataFrame(dict((k, finished[k].flatten()) for k in gen_specs['persis_in']))
-        final_output = f"{libE_specs['ensemble_dir_path']}/results.csv"
-        full_log.to_csv(final_output, index=False)
-        print(f"All finished results logged to {final_output}")
+        manager_save(H, gen_specs, libE_specs)
 

@@ -49,6 +49,23 @@ class Plopper:
                  stat.S_IRGRP | stat.S_IXGRP |
                  stat.S_IROTH | stat.S_IXOTH)
 
+    def read_logs(this_log, workerID):
+        result = None
+        try:
+            with open(this_log,"r") as logged:
+                lines = [_.rstrip() for _ in logged.readlines()]
+                for line in lines:
+                    if "Performance: " in line:
+                        split = [_ for _ in line.split(' ') if len(_) > 0]
+                        result = -1 * float(split[1])
+                        print(f"[worker {workerID} - plopper] evaluation OK: {result}")
+                        break
+        except Exception as e:
+            warnings.warn(f"Evaluation raised {e.__class__.__name__}: {e.args}")
+            # Evaluation code 3 reserved for Python log processing error
+            return 3.0
+        return result
+
     # Function to find the execution time of the interim file, and return the execution time as cost to the search module
     def findRuntime(self, x, params, workerID, app_timeout, mpi_ranks, ranks_per_node, n_repeats=1):
         #print(workerID, x, params)
@@ -66,7 +83,7 @@ class Plopper:
         #Find the execution metric
         # Divide and promote instead of truncate
         j = math.ceil(dictVal['P9'] / 64)
-        cmd = self.cmd_template.format(mpi_ranks=mpi_ranks, ranks_per_node=ranks_per_node, depth=dictVal['P9'], j=j, interimfile=interimfile)
+        cmd = self.cmd_template.format(mpi_ranks=mpi_ranks, ranks_per_node=ranks_per_node, depth=dictVal['P9']//j, j=j, interimfile=interimfile)
         #cmd = f"mpiexec -n {mpi_ranks} --ppn {ranks_per_node} --depth {dictVal['P9']} sh ./set_affinity_gpu_polaris.sh {interimfile}"
         #cmd = f"aprun -n {mpi_ranks} -N {ranks_per_node} -cc depth -d {dictVal['P9']} -j {j} sh {interimfile}"
         print(f"[worker {workerID} - plopper] runs: {cmd}")
@@ -74,32 +91,35 @@ class Plopper:
         results = []
         for attempt in range(n_repeats):
             this_log = f"{self.outputdir}/{counter}_{attempt}.log"
+            logged = False
             with open(this_log,"w") as logfile:
                 execution_status = subprocess.Popen(cmd, shell=True, stdout=logfile, stderr=logfile)
                 child_pid = execution_status.pid
                 try:
                     execution_status.communicate(timeout=app_timeout)
                 except subprocess.TimeoutExpired:
-                    results.append(1.0)
-                    print(f"[worker {workerID} - plopper] receives: TIMEOUT {results[-1]}")
+                    print(f"[worker {workerID} - plopper] triggers TIMEOUT")
                     os.kill(child_pid, signal.SIGTERM)
                     continue
+                logged = True
             if execution_status.returncode != 0:
+                # Evaluation code 2.* reserved for Execution errors
                 results.append(2. + execution_status.returncode/1000)
                 warnings.warn(f"{workerID} evaluation had bad return code {results[-1]}")
                 print(f"[worker {workerID} - plopper] receives: ERROR {execution_status.returncode}")
                 continue
-            try:
-                with open(this_log,"r") as logged:
-                    lines = [_.rstrip() for _ in logged.readlines()]
-                    for line in lines:
-                        if "Performance: " in line:
-                            split = [_ for _ in line.split(' ') if len(_) > 0]
-                            results.append(-1 * float(split[1]))
-                            print(f"[worker {workerID} - plopper] receives: OK {results[-1]}")
-                            break
-            except Exception as e:
-                warnings.warn(f"Evaluation raised {e.__class__.__name__}: {e.args}")
+            elif logged:
+                results.append(read_logs(this_log, workerID))
+            else:
+                # Timed out evaluations MAY be recoverable if the log is readable
+                to_result = read_logs(this_log, workerID)
+                if to_result is None:
+                    # Evaluation code 1.0 reserved for unrecoverable Timeout
+                    results.append(1.0)
+                    print(f"[worker {workerID} - plopper] evaluation TIMED OUT: {results[-1]}")
+                else:
+                    results.append(to_result)
+
         usable_results = [_ for _ in results if _ < 0]
         if len(usable_results) > 0:
             # Get the best result we observed (unstable measurements)

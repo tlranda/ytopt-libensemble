@@ -37,14 +37,18 @@ def build():
                         help="Add randomization to customized ensemble-dir-path's (default: NOT added)")
     ensemble.add_argument("--launch-job", action='store_true',
                         help="Launch job once prepared (default: NOT launched, job script only written)")
+    # SEEDS
+    seeds = parser.add_argument_group("Seeds", "Arguments that control randomization seeding")
+    seeds.add_argument("--seed-configspace", type=int, default=1234,
+                        help="Seed for the ConfigurationSpace object (default: %(default)s)")
+    seeds.add_argument("--seed-ytopt", type=int, default=2345,
+                        help="Seed for the Ytopt Optimizer (default: %(default)s)")
+    seeds.add_argument("--seed-numpy", type=int, default=1,
+                        help="Seed for Numpy default random stream (default: %(default)s)")
     # FILES
     files = parser.add_argument_group("Files", "Arguments that dictate input and output files")
     files.add_argument("--libensemble-target", type=str, default="run_ytopt.py",
                         help="Script invoked as libEnsemble caller (default: %(default)s)")
-    files.add_argument("--plopper-target", type=str, default="plopper.py",
-                        help="Plopper that libEnsemble caller will use (default: %(default)s)")
-    files.add_argument("--problem-target", type=str, default="problem.py",
-                        help="Problem that libEnsemble caller will use (default: %(default)s)")
     files.add_argument("--generated-script", type=str, default="qsub.batch",
                         help="Qsub script is written to this location, then executed (default: %(default)s)")
     files.add_argument("--display-results", action='store_true',
@@ -58,17 +62,17 @@ def parse(prs=None, args=None):
         args = prs.parse_args()
     # Ensure string is edited in file to be None rather than using None as a str-like object
     if args.ensemble_dir_path is not None:
-        args.ensemble_dir_path = f'"{args.ensemble_dir_path}'
+        args.ensemble_dir_path = '"' + args.ensemble_dir_path
     else:
-        args.ensemble_dir_path = ""
+        args.ensemble_dir_path = ''
     if args.ensemble_path_randomization:
         import secrets
-        if args.ensemble_dir_path == "":
+        if args.ensemble_dir_path == '':
             args.ensemble_dir_path = '"'
         args.ensemble_dir_path += "_"+secrets.token_hex(nbytes=4)
-    if args.ensemble_dir_path == "":
-        args.ensemble_dir_path = '"'
     args.ensemble_dir_path += '"' # close quote
+    if args.ensemble_dir_path == '"':
+        args.ensemble_dir_path = '""'
     # Environments
     if args.configure_environment is None:
         args.configure_environment = []
@@ -92,6 +96,9 @@ def parse(prs=None, args=None):
         'machine_identifier': [(args.libensemble_target, "s/MACHINE_IDENTIFIER = .*/MACHINE_IDENTIFIER = {}/")],
         'cpu_override': [(args.libensemble_target, "s/cpu_override = .*/cpu_override = {}/")],
         'gpu_enabled': [(args.libensemble_target, "s/gpu_enabled = .*/gpu_enabled = {}/")],
+        'seed_configspace': [(args.libensemble_target, "s/CONFIGSPACE_SEED = .*/CONFIGSPACE_SEED = {}/")],
+        'seed_ytopt': [(args.libensemble_target, "s/YTOPT_SEED = .*/YTOPT_SEED = {}/")],
+        'seed_numpy': [(args.libensemble_target, "s/NUMPY_SEED = .*/NUMPY_SEED = {}/")],
     }
     return args
 
@@ -181,7 +188,9 @@ echo;
     with open(args.generated_script, 'w') as f:
         f.write(job_contents)
     # Set RWX for owner, RX for all others
-    os.chmod(args.generated_script, stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
+    os.chmod(args.generated_script, stat.S_IRWXU |
+                                    stat.S_IRGRP | stat.S_IXGRP |
+                                    stat.S_IROTH | stat.S_IXOTH)
     print("OK!")
     if args.launch_job:
         proc = subprocess.run(f"./{args.generated_script}")
@@ -191,7 +200,7 @@ echo;
         if proc.returncode == 0 and args.display_results:
             import pandas as pd
             print("Finished evaluations")
-            print(pd.read_csv(f"./ensemble_{args.ensemble_dir_path[1:-1]}/results.csv"))
+            print(pd.read_csv(f"./ensemble_{args.ensemble_dir_path[1:-1]}/results_final.csv"))
             try:
                 print("Unfinished evaluations")
                 print(pd.read_csv(f"./ensemble_{args.ensemble_dir_path[1:-1]}/unfinished_results.csv"))
