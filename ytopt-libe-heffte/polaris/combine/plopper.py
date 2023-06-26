@@ -49,7 +49,7 @@ class Plopper:
                  stat.S_IRGRP | stat.S_IXGRP |
                  stat.S_IROTH | stat.S_IXOTH)
 
-    def read_logs(this_log, workerID):
+    def read_logs(self, this_log, workerID):
         result = None
         try:
             with open(this_log,"r") as logged:
@@ -109,10 +109,10 @@ class Plopper:
                 print(f"[worker {workerID} - plopper] receives: ERROR {execution_status.returncode}")
                 continue
             elif logged:
-                results.append(read_logs(this_log, workerID))
+                results.append(self.read_logs(this_log, workerID))
             else:
                 # Timed out evaluations MAY be recoverable if the log is readable
-                to_result = read_logs(this_log, workerID)
+                to_result = self.read_logs(this_log, workerID)
                 if to_result is None:
                     # Evaluation code 1.0 reserved for unrecoverable Timeout
                     results.append(1.0)
