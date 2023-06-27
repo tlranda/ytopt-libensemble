@@ -83,9 +83,8 @@ class Plopper:
         #Find the execution metric
         # Divide and promote instead of truncate
         j = math.ceil(dictVal['P9'] / 64)
+        # Command template set up in ytopt_obj.py -- this separates the need to look at what system we're on out of the plopper
         cmd = self.cmd_template.format(mpi_ranks=mpi_ranks, ranks_per_node=ranks_per_node, depth=dictVal['P9']//j, j=j, interimfile=interimfile)
-        #cmd = f"mpiexec -n {mpi_ranks} --ppn {ranks_per_node} --depth {dictVal['P9']} sh ./set_affinity_gpu_polaris.sh {interimfile}"
-        #cmd = f"aprun -n {mpi_ranks} -N {ranks_per_node} -cc depth -d {dictVal['P9']} -j {j} sh {interimfile}"
         print(f"[worker {workerID} - plopper] runs: {cmd}")
 
         results = []

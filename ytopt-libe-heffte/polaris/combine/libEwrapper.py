@@ -200,7 +200,7 @@ echo;
         if proc.returncode == 0 and args.display_results:
             import pandas as pd
             print("Finished evaluations")
-            print(pd.read_csv(f"./ensemble_{args.ensemble_dir_path[1:-1]}/results_final.csv"))
+            print(pd.read_csv(f"./ensemble_{args.ensemble_dir_path[1:-1]}/manager_results.csv"))
             try:
                 print("Unfinished evaluations")
                 print(pd.read_csv(f"./ensemble_{args.ensemble_dir_path[1:-1]}/unfinished_results.csv"))

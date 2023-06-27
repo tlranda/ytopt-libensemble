@@ -72,14 +72,22 @@ def topology_interpret(config: dict) -> dict:
 
 def myobj(point: dict, params: list, workerID: int) -> float:
     try:
+        # Topology interpretation replaces floats with MPI rank configuration based on "tall" vs "broad"
         point = topology_interpret(point)
         machine_info = point.pop('machine_info')
+        # Machine identifier changes the proper invocation to utilize allocated resources
+        # Also customize timeout based on application scale per system
+        known_timeouts = {}
         if 'polaris' in machine_info['identifier']:
-            machine_format_str = "mpiexec -n {mpi_ranks} --ppn {ranks_per_node} --depth {depth} sh ./set_affinity_gpu_polaris.sh {interimfile}"
+            machine_format_str = "mpiexec -n {mpi_ranks} --ppn {ranks_per_node} --depth {depth} --cpu-bind depth --env OMP_NUM_THREADS={depth} sh ./set_affinity_gpu_polaris.sh {interimfile}"
         elif 'theta' in machine_info['identifier']:
-            machine_format_str = "aprun -n {mpi_ranks} -N {ranks_per_node} -cc depth -d {depth} -j {j} sh {interimfile}"
+            machine_format_str = "aprun -n {mpi_ranks} -N {ranks_per_node} -cc depth -d {depth} -j {j} -e OMP_NUM_THREADS={depth} sh {interimfile}"
+            theta_timeouts = {64: 20.0}
+            known_timeouts.update(theta_timeouts)
         else:
             machine_format_str = None
+        if point['p1'] in known_timeouts.keys():
+            machine_info['app_timeout'] = known_timeouts[point['p1']]
         print(f"[worker {workerID} - obj] receives point {point}")
         x = np.array(point.values())
         def plopper_func(x, params):
