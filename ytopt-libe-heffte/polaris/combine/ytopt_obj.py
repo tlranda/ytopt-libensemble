@@ -80,9 +80,11 @@ def myobj(point: dict, params: list, workerID: int) -> float:
         known_timeouts = {}
         if 'polaris' in machine_info['identifier']:
             machine_format_str = "mpiexec -n {mpi_ranks} --ppn {ranks_per_node} --depth {depth} --cpu-bind depth --env OMP_NUM_THREADS={depth} sh ./set_affinity_gpu_polaris.sh {interimfile}"
+            polaris_timeouts = {64: 10.0, 128: 10.0, 256: 10.0, 512: 10.0}
+            known_timeouts.update(polaris_timeouts)
         elif 'theta' in machine_info['identifier']:
             machine_format_str = "aprun -n {mpi_ranks} -N {ranks_per_node} -cc depth -d {depth} -j {j} -e OMP_NUM_THREADS={depth} sh {interimfile}"
-            theta_timeouts = {64: 20.0}
+            theta_timeouts = {64: 20.0, 128: 40.0, 256: 60.0}
             known_timeouts.update(theta_timeouts)
         else:
             machine_format_str = None

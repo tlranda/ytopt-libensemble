@@ -61,7 +61,8 @@ class Plopper:
                         print(f"[worker {workerID} - plopper] evaluation OK: {result}")
                         break
         except Exception as e:
-            warnings.warn(f"Evaluation raised {e.__class__.__name__}: {e.args}")
+            eval_warning = f"Evaluation raised {e.__class__.__name__}: {e.args}"
+            warnings.warn(eval_warning)
             # Evaluation code 3 reserved for Python log processing error
             return 3.0
         return result
@@ -97,25 +98,32 @@ class Plopper:
                 try:
                     execution_status.communicate(timeout=app_timeout)
                 except subprocess.TimeoutExpired:
-                    print(f"[worker {workerID} - plopper] triggers TIMEOUT")
+                    print(f"[worker {workerID} - plopper] triggers TIMEOUT on {interimfile}")
                     os.kill(child_pid, signal.SIGTERM)
-                    continue
-                logged = True
-            if execution_status.returncode != 0:
+                else:
+                    logged = True
+            if logged and execution_status.returncode != 0:
                 # Evaluation code 2.* reserved for Execution errors
                 results.append(2. + execution_status.returncode/1000)
-                warnings.warn(f"{workerID} evaluation had bad return code {results[-1]}")
-                print(f"[worker {workerID} - plopper] receives: ERROR {execution_status.returncode}")
+                eval_error_warning = f"{workerID} evaluation had bad return code {results[-1]} on {interimfile}"
+                warnings.warn(eval_error_warning)
+                print(f"[worker {workerID} - plopper] receives: ERROR {execution_status.returncode} from {interimfile}")
                 continue
             elif logged:
-                results.append(self.read_logs(this_log, workerID))
+                logged = self.read_logs(this_log, workerID)
+                if logged is not None:
+                    results.append(logged)
+                else:
+                    bad_logs_warning = f"{workerID} failed to read logs of a successful evaluation of {interimfile}"
+                    warnings.warn(bad_logs_warning)
+                    results.append(1.1)
             else:
                 # Timed out evaluations MAY be recoverable if the log is readable
                 to_result = self.read_logs(this_log, workerID)
                 if to_result is None:
                     # Evaluation code 1.0 reserved for unrecoverable Timeout
                     results.append(1.0)
-                    print(f"[worker {workerID} - plopper] evaluation TIMED OUT: {results[-1]}")
+                    print(f"[worker {workerID} - plopper] evaluation TIMED OUT: {results[-1]} from {interimfile}; non-recoverable")
                 else:
                     results.append(to_result)
 
