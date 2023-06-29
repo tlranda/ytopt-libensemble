@@ -24,6 +24,8 @@ multiprocessing.set_start_method('fork', force=True)
 from libensemble.libE import libE
 from libensemble.alloc_funcs.start_only_persistent import only_persistent_gens as alloc_f
 from libensemble.tools import parse_args, save_libE_output, add_unique_random_streams
+from libensemble import logger
+logger.set_level("DEBUG") # Ensure logs are worth reading
 
 from ytopt_asktell import persistent_ytopt  # Generator function, communicates with ytopt optimizer
 from ytopt_obj import init_obj  # Simulator function, calls Plopper
@@ -62,7 +64,7 @@ assert all([opt in user_args for opt in req_settings]), \
 
 # Variables that will be sed-edited to control scaling
 APP_SCALE = 64
-MPI_RANKS = 1
+MPI_RANKS = 4096
 # SEEDING
 CONFIGSPACE_SEED = 1234
 YTOPT_SEED = 2345
@@ -116,7 +118,7 @@ if gpu_enabled:
     ranks_per_node = gpus
 else:
     # CPU only uses ONE process per node, scales across hw threads and additional nodes
-    ranks_per_node = 1
+    ranks_per_node = 64
     print("CPU mode; limit ONE rank per node")
 print(f"Set ranks_per_node to {ranks_per_node}"+"\n")
 c0 = CSH.Constant('c0', value='cufft' if gpu_enabled else 'fftw')
@@ -165,7 +167,7 @@ MACHINE_INFO = {
     'ranks_per_node': ranks_per_node,
     'gpu_enabled': gpu_enabled,
     'libE_workers': num_sim_workers,
-    'app_timeout': 20,
+    'app_timeout': 300,
 }
 
 # Declare the sim_f to be optimized, and the input/outputs
@@ -235,7 +237,7 @@ libE_specs['use_worker_dirs'] = True
 libE_specs['sim_dirs_make'] = False  # Otherwise directories separated by each sim call
 # Copy or symlink needed files into unique directories
 libE_specs['sim_dir_symlink_files'] = [here + f for f in ['speed3d.sh', 'plopper.py', 'set_affinity_gpu_polaris.sh']]
-ENSEMBLE_DIR_PATH = "ThetaScaling_debug_4_ab15caa4"
+ENSEMBLE_DIR_PATH = "Theta_APP_64_MPI_4096_a54a0cc2"
 libE_specs['ensemble_dir_path'] = f'./ensemble_{ENSEMBLE_DIR_PATH}'
 #if you need to manually specify resource information, ie:
 #    libE_specs['resource_info'] = {'cores_on_node': (64,256), 'gpus_on_node': 0}
@@ -267,5 +269,7 @@ if __name__ == '__main__':
     if is_manager:
         # We may have missed the final evaluation in the results file
         print("\nlibEnsemble has completed evaluations.")
+        with open(f"{libE_specs['ensemble_dir_path']}/full_H_array.npz",'wb') as np_save_H:
+            np.save(np_save_H, H)
         manager_save(H, gen_specs, libE_specs)
 
