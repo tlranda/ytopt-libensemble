@@ -99,7 +99,10 @@ class Plopper:
                     execution_status.communicate(timeout=app_timeout)
                 except subprocess.TimeoutExpired:
                     print(f"[worker {workerID} - plopper] triggers TIMEOUT on {interimfile}")
-                    os.kill(child_pid, signal.SIGTERM)
+                    kill_status = subprocess.run(['kill', '-s', '9', str(child_pid)], shell=True)
+                    if kill_status.returncode != 0:
+                        print(f"FAILED TO KILL PROCESS {child_pid}")
+                    #os.kill(child_pid, signal.SIGTERM)
                 else:
                     logged = True
             if logged and execution_status.returncode != 0:
