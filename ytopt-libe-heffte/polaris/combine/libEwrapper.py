@@ -197,6 +197,12 @@ echo;
         migrated_job_script = f"./ensemble_{args.ensemble_dir_path[1:-1]}/{args.generated_script}"
         os.rename(args.generated_script, migrated_job_script)
         print("Job script migrated to ensemble directory")
+        try:
+            os.rename('ensemble.log', f"./ensemble_{args.ensemble_dir_path[1:-1]}/ensemble.log")
+        except:
+            print("Ensemble logs could not be migrated")
+        else:
+            print("Ensemble logs migrated to ensemble directory")
         if proc.returncode == 0 and args.display_results:
             import pandas as pd
             print("Finished evaluations")
