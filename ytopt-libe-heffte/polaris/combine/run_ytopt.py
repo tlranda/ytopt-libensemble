@@ -63,8 +63,8 @@ assert all([opt in user_args for opt in req_settings]), \
 
 
 # Variables that will be sed-edited to control scaling
-APP_SCALE = 64
-MPI_RANKS = 4096
+APP_SCALE = 1024
+MPI_RANKS = 64
 # SEEDING
 CONFIGSPACE_SEED = 1234
 YTOPT_SEED = 2345
@@ -92,7 +92,8 @@ p8 = CSH.UniformFloatHyperparameter(name='p8', lower=0, upper=1)
 
 
 # Cross-architecture is out-of-scope for now so we determine this for the current platform and leave it at that
-cpu_override = 256
+cpu_override = None
+cpu_ranks_per_node = 64
 if cpu_override is None:
     proc = subprocess.run(['nproc'], capture_output=True)
     if proc.returncode == 0:
@@ -108,7 +109,7 @@ else:
     threads_per_node = cpu_override
     print(f"Override indicates {threads_per_node} CPU threads on this machine")
 
-gpu_enabled = False
+gpu_enabled = True
 if gpu_enabled:
     proc = subprocess.run('nvidia-smi -L'.split(' '), capture_output=True)
     if proc.returncode != 0:
@@ -117,9 +118,8 @@ if gpu_enabled:
     print(f"Detected {gpus} GPUs on this machine")
     ranks_per_node = gpus
 else:
-    # CPU only uses ONE process per node, scales across hw threads and additional nodes
-    ranks_per_node = 64
-    print("CPU mode; limit ONE rank per node")
+    ranks_per_node = cpu_ranks_per_node
+    print(f"CPU mode; force {ranks_per_node} ranks per node")
 print(f"Set ranks_per_node to {ranks_per_node}"+"\n")
 c0 = CSH.Constant('c0', value='cufft' if gpu_enabled else 'fftw')
 
@@ -159,7 +159,7 @@ ytoptimizer = Optimizer(
     set_NI=10,
 )
 
-MACHINE_IDENTIFIER = "theta-knl"
+MACHINE_IDENTIFIER = "polaris-gpu"
 print(f"Identifying machine as {MACHINE_IDENTIFIER}"+"\n")
 MACHINE_INFO = {
     'identifier': MACHINE_IDENTIFIER,
@@ -237,7 +237,7 @@ libE_specs['use_worker_dirs'] = True
 libE_specs['sim_dirs_make'] = False  # Otherwise directories separated by each sim call
 # Copy or symlink needed files into unique directories
 libE_specs['sim_dir_symlink_files'] = [here + f for f in ['speed3d.sh', 'plopper.py', 'set_affinity_gpu_polaris.sh']]
-ENSEMBLE_DIR_PATH = "Theta_APP_64_MPI_4096_a54a0cc2"
+ENSEMBLE_DIR_PATH = "PolarisTimeout_1024_bec6e1ab"
 libE_specs['ensemble_dir_path'] = f'./ensemble_{ENSEMBLE_DIR_PATH}'
 #if you need to manually specify resource information, ie:
 #    libE_specs['resource_info'] = {'cores_on_node': (64,256), 'gpus_on_node': 0}
