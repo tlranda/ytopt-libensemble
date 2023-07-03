@@ -83,9 +83,9 @@ class Plopper:
 
         #Find the execution metric
         # Divide and promote instead of truncate
-        j = math.ceil(dictVal['P9'] / 64)
+        j = math.ceil(ranks_per_node * dictVal['P9'] / 64)
         # Command template set up in ytopt_obj.py -- this separates the need to look at what system we're on out of the plopper
-        cmd = self.cmd_template.format(mpi_ranks=mpi_ranks, ranks_per_node=ranks_per_node, depth=dictVal['P9']//j, j=j, interimfile=interimfile)
+        cmd = self.cmd_template.format(mpi_ranks=mpi_ranks, ranks_per_node=ranks_per_node, depth=dictVal['P9'], j=j, interimfile=interimfile)
         print(f"[worker {workerID} - plopper] runs: {cmd}")
 
         results = []
@@ -98,11 +98,15 @@ class Plopper:
                 try:
                     execution_status.communicate(timeout=app_timeout)
                 except subprocess.TimeoutExpired:
-                    print(f"[worker {workerID} - plopper] triggers TIMEOUT on {interimfile}")
-                    kill_status = subprocess.run(['kill', '-s', '9', str(child_pid)], shell=True)
-                    if kill_status.returncode != 0:
-                        print(f"FAILED TO KILL PROCESS {child_pid}")
+                    print(f"[worker {workerID} - plopper] triggers TIMEOUT ({app_timeout} s) on {interimfile} (procID: {child_pid})")
+                    execution_status.kill()
+                    #kill_cmd = ['kill', '-s', '9', str(child_pid)]
+                    #kill_status = subprocess.run(kill_cmd, shell=True)
                     #os.kill(child_pid, signal.SIGTERM)
+                    check_cmd = ['ps', '--pid', str(child_pid)]
+                    check_status = subprocess.run(check_cmd, shell=True, stdout=subprocess.PIPE)
+                    if len(check_status.stdout.decode('utf-8').rstrip('\n').split('\n')) != 1:
+                        print(f"FAILED TO KILL PROCESS {child_pid}")
                 else:
                     logged = True
             if logged and execution_status.returncode != 0:
