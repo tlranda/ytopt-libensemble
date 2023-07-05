@@ -35,7 +35,9 @@ import ConfigSpace as CS
 import ConfigSpace.hyperparameters as CSH
 from ConfigSpace import ConfigurationSpace, EqualsCondition
 from sdv.single_table import GaussianCopulaSynthesizer as GaussianCopula
-from sdv.conditions import Condition
+from sdv.metadata import SingleTableMetadata
+from sdv.sampling.tabular import Condition
+from sdv.constraints import ScalarRange
 
 # Parse comms, default options from commandline
 nworkers, is_manager, libE_specs, user_args_in = parse_args()
@@ -158,9 +160,16 @@ conditions = []
 model.sample_conditions(conditions)
 import pdb
 pdb.set_trace()
-conditions = [Condition({'mpi_ranks': 64, 'p0': 64}, num_rows=max(100, user_args['max-evals'])]
-model2 = GaussianCopula()
-model2.fit(data)
+conditions = [Condition({'mpi_ranks': 64, 'p1': 64}, num_rows=max(100, user_args['max-evals']))]
+metadata = SingleTableMetadata()
+data_trimmed = data[['c0',]+[f'p{_}' for _ in range(10)]+['mpi_ranks']]
+metadata.detect_from_dataframe(data_trimmed)
+constraints = [{'constraint_class': 'ScalarRange', 'constraint_parameters': {'column_name': 'p1', 'low_value': 64, 'high_value': 1024,},},
+               {'constraint_class': 'ScalarRange', 'constraint_parameters': {'column_name': 'mpi_ranks', 'low_value': 1, 'high_value': 8192,},},]
+model2 = GaussianCopula(metadata)
+model2.add_constraints(constraints=constraints)
+model2.fit(data_trimmed)
+model2.sample_from_conditions(conditions)
 
 # Create problem instance to evaluate configurations
 class stub2():
