@@ -4,6 +4,7 @@ import numpy as np
 import warnings
 import os, stat, signal
 import math
+import time
 
 class Plopper:
     def __init__(self,sourcefile,outputdir,formatSTR=None):
@@ -94,19 +95,31 @@ class Plopper:
             logged = False
             with open(this_log,"w") as logfile:
                 execution_status = subprocess.Popen(cmd, shell=True, stdout=logfile, stderr=logfile)
-                child_pid = execution_status.pid
+                # Killing the mpiexec or aprun call itself does not propagate down to the correct speed3d_r2c process
+                # We can add 1 to skip over that call
+                # Then we can add +1 PIDs for each "./" substring as that increments the # of processes
+                # THIS IS A RACE CONDITION WITH OTHER PROCESSES but so far it seems stable enough in practice
+                # If we can properly trace the process tree down to get the correct child PID, that would be ideal
+                child_pid = execution_status.pid # + cmd.count("./") + 1
                 try:
                     execution_status.communicate(timeout=app_timeout)
                 except subprocess.TimeoutExpired:
                     print(f"[worker {workerID} - plopper] triggers TIMEOUT ({app_timeout} s) on {interimfile} (procID: {child_pid})")
-                    execution_status.kill()
                     #kill_cmd = ['kill', '-s', '9', str(child_pid)]
                     #kill_status = subprocess.run(kill_cmd, shell=True)
                     #os.kill(child_pid, signal.SIGTERM)
+                    close_children(child_pid)
+                    try:
+                        execution_status.kill()
+                    except:
+                        pass
+                    time.sleep(1) # Permit process shutdown
                     check_cmd = ['ps', '--pid', str(child_pid)]
                     check_status = subprocess.run(check_cmd, shell=True, stdout=subprocess.PIPE)
                     if len(check_status.stdout.decode('utf-8').rstrip('\n').split('\n')) != 1:
+                        #print(" ".join(check_cmd))
                         print(f"FAILED TO KILL PROCESS {child_pid}")
+                        #print("\n".join(check_status.stdout.decode('utf-8').rstrip('\n').split('\n')))
                 else:
                     logged = True
             if logged and execution_status.returncode != 0:
@@ -141,4 +154,14 @@ class Plopper:
         else:
             # Ensure the gravest error is reported
             return max(results)
+
+def close_children(pid):
+    import psutil
+    try:
+        parent = psutil.Process(pid)
+    except psutil.NoSuchProcess:
+      return
+    children = parent.children(recursive=True)
+    for p in children:
+        os.kill(p.pid, signal.SIGKILL)
 

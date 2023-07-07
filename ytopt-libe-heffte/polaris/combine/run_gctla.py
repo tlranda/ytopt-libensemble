@@ -128,6 +128,8 @@ if len(sequence) >= 2:
 # Ensure max_depth is always in the list
 if np.log2(max_depth)-int(np.log2(max_depth)) > 0:
     sequence = sorted(sequence+[max_depth])
+if max_depth not in sequence:
+    sequence = sorted(sequence+[max_depth])
 print(f"Depths are based on {threads_per_node} threads on each node, shared across {ranks_per_node} MPI ranks on each node")
 print(f"Selectable depths are: {sequence}"+"\n")
 # arg10 number threads per MPI process
@@ -139,37 +141,32 @@ cs.add_hyperparameters([p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, c0])
 static_imports = ['logs/ThetaSourceTasks/Theta_1n_128a',
                   'logs/ThetaSourceTasks/Theta_1n_256a',]
 data = pd.concat([pd.read_csv(_+'/manager_results.csv') for _ in static_imports])
+data_trimmed = data[['c0',]+[f'p{_}' for _ in range(10)]+['mpi_ranks']]
 # Create model
-class stub():
-    def sample_conditions(self, conditions, num_rows=1):
-        x = np.asarray([('fftw', 'float', 64, ' ', ' ', ' ', ' ', ' ', 1., 1., 2,)],
-                          dtype=[('c0',('<U24',(1,))),
-                                 ('p0',('<U24',(1,))),
-                                 ('p1',(int,(1,))),
-                                 ('p2',('<U24',(1,))),
-                                 ('p3',('<U24',(1,))),
-                                 ('p4',('<U24',(1,))),
-                                 ('p5',('<U24',(1,))),
-                                 ('p6',('<U24',(1,))),
-                                 ('p7',(float,(1,))),
-                                 ('p8',(float,(1,))),
-                                 ('p9',(int,(1,))),])
-        return pd.DataFrame([[_[0] for a in x.tolist() for _ in a]], columns=x.dtype.names)
-model = stub()
-conditions = []
-model.sample_conditions(conditions)
 import pdb
 pdb.set_trace()
 conditions = [Condition({'mpi_ranks': 64, 'p1': 64}, num_rows=max(100, user_args['max-evals']))]
 metadata = SingleTableMetadata()
-data_trimmed = data[['c0',]+[f'p{_}' for _ in range(10)]+['mpi_ranks']]
 metadata.detect_from_dataframe(data_trimmed)
-constraints = [{'constraint_class': 'ScalarRange', 'constraint_parameters': {'column_name': 'p1', 'low_value': 64, 'high_value': 1024,},},
-               {'constraint_class': 'ScalarRange', 'constraint_parameters': {'column_name': 'mpi_ranks', 'low_value': 1, 'high_value': 8192,},},]
-model2 = GaussianCopula(metadata)
-model2.add_constraints(constraints=constraints)
-model2.fit(data_trimmed)
-model2.sample_from_conditions(conditions)
+constraints = [{'constraint_class': 'ScalarRange',
+                    'constraint_parameters': {
+                        'column_name': 'p1',
+                        'low_value': 64,
+                        'high_value': 1024,
+                        'strict_boundaries': False},
+                    },
+               {'constraint_class': 'ScalarRange',
+                    'constraint_parameters': {
+                        'column_name': 'mpi_ranks',
+                        'low_value': 1,
+                        'high_value': 8192,},
+                    },
+              ]
+model = GaussianCopula(metadata, enforce_min_max_values=False)
+model.add_constraints(constraints=constraints)
+model.fit(data_trimmed)
+sampled = model.sample_from_conditions(conditions)
+print(f"Model samples a bunch of stuff for you {sampled}")
 
 # Create problem instance to evaluate configurations
 class stub2():

@@ -64,7 +64,7 @@ assert all([opt in user_args for opt in req_settings]), \
 
 # Variables that will be sed-edited to control scaling
 APP_SCALE = 1024
-MPI_RANKS = 64
+MPI_RANKS = 8
 # SEEDING
 CONFIGSPACE_SEED = 1234
 YTOPT_SEED = 2345
@@ -140,6 +140,8 @@ if len(sequence) >= 2:
     sequence = sorted(intermediates + sequence)
 # Ensure max_depth is always in the list
 if np.log2(max_depth)-int(np.log2(max_depth)) > 0:
+    sequence = sorted(sequence+[max_depth])
+if max_depth not in sequence:
     sequence = sorted(sequence+[max_depth])
 print(f"Depths are based on {threads_per_node} threads on each node, shared across {ranks_per_node} MPI ranks on each node")
 print(f"Selectable depths are: {sequence}"+"\n")
@@ -237,7 +239,7 @@ libE_specs['use_worker_dirs'] = True
 libE_specs['sim_dirs_make'] = False  # Otherwise directories separated by each sim call
 # Copy or symlink needed files into unique directories
 libE_specs['sim_dir_symlink_files'] = [here + f for f in ['speed3d.sh', 'plopper.py', 'set_affinity_gpu_polaris.sh']]
-ENSEMBLE_DIR_PATH = "PolarisTimeout_1024_bec6e1ab"
+ENSEMBLE_DIR_PATH = "PolarisTimeout_1024_75258fed"
 libE_specs['ensemble_dir_path'] = f'./ensemble_{ENSEMBLE_DIR_PATH}'
 #if you need to manually specify resource information, ie:
 #    libE_specs['resource_info'] = {'cores_on_node': (64,256), 'gpus_on_node': 0}
