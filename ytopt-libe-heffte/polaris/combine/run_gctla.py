@@ -145,7 +145,7 @@ data_trimmed = data[['c0',]+[f'p{_}' for _ in range(10)]+['mpi_ranks']]
 # Create model
 import pdb
 pdb.set_trace()
-conditions = [Condition({'mpi_ranks': 64, 'p1': 64}, num_rows=max(100, user_args['max-evals']))]
+conditions = [Condition({'mpi_ranks': 64, 'p1': 64}, num_rows=100)] #max(100, user_args['max-evals']))]
 metadata = SingleTableMetadata()
 metadata.detect_from_dataframe(data_trimmed)
 constraints = [{'constraint_class': 'ScalarRange',
@@ -165,7 +165,8 @@ constraints = [{'constraint_class': 'ScalarRange',
 model = GaussianCopula(metadata, enforce_min_max_values=False)
 model.add_constraints(constraints=constraints)
 model.fit(data_trimmed)
-sampled = model.sample_from_conditions(conditions)
+# THIS SHOULD BE IN GENERATOR (LIBE_ASKTELL), DEMO ONLY:
+sampled = model.sample_from_conditions(conditions)[:user_args['max-evals']]
 print(f"Model samples a bunch of stuff for you {sampled}")
 
 # Create problem instance to evaluate configurations
@@ -176,8 +177,12 @@ class stub2():
         self.counter += 1
         return -1. + self.counter
 problem = stub2()
-#problem = gc_tla_problem.N_1
-#problem.set_space(cs)
+
+# Fetch problem instance and set its space based on alterations
+import gc_tla_problem
+app_scale_name = dict((v,k) for (k,v) in gc_tla_problem.lookup_ival.items())[APP_SCALE]
+problem = getattr(gc_tla_problem, f"{app_scale_name}_{NODE_COUNT}")
+problem.set_space(cs)
 
 
 MACHINE_IDENTIFIER = "thetamom2"
