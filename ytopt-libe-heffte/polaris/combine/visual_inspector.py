@@ -15,6 +15,8 @@ def build(prs=None):
     prs.add_argument("--highlight", type=int, default=-1, help="Focus results on the nth (0-indexed) directory (default: ALL directories)")
     prs.add_argument("--timeout", type=float, default=20.0, help="Virtual timeout to include on graph (default: %(default)s)")
     prs.add_argument("--flops-only", action="store_true", help="Drop runtime from the plots")
+    prs.add_argument("--stats", action="store_true", help="Calculate extended stats (text only)")
+    prs.add_argument("--no-plots", action="store_true", help="Skip visuals")
     return prs
 
 def parse(prs=None, args=None):
@@ -35,6 +37,7 @@ def parse(prs=None, args=None):
 
 def load(args):
     frames = []
+    names = []
     for dirname in args.directory:
         try:
             frame = pd.read_csv(os.path.join(dirname, "manager_results.csv"))
@@ -68,7 +71,8 @@ def load(args):
         frame.insert(0, 'elapsed_diff', elapsed_diff)
         frame.insert(0, 'continuous_diff', continuous_diff)
         frames.append(frame)
-    return frames
+        names.append(dirname.rstrip('/').split('/')[-1])
+    return frames, names
 
 def observations(frame, args):
     max_workers = frame.iloc[0]['libE_workers']
@@ -113,31 +117,39 @@ def observations(frame, args):
     print(frame[['index','libE_id','elapsed_sec','elapsed_diff','continuous_diff','FLOPS']])
     print()
 
+def visualizations(frames, args):
+    fig, ax = plt.subplots()
+    max_frame_index = max([max(frame['index']) for frame in frames])
+    if not args.flops_only:
+        for frame, name in zip(frames, names):
+            #newline = sns.lineplot(frame, x='elapsed_sec', y='FLOPS', estimator=None, marker='.')
+            newline = sns.lineplot(frame, x='index', y='elapsed_diff', estimator=None, marker='.', label=name)
+        #ax.hlines(0.0, xmin=0, xmax=max([max(frame['elapsed_sec']) for frame in frames]))
+        ax.hlines(0.0, xmin=0, xmax=max_frame_index)
+        ax.hlines(args.timeout, xmin=0, xmax=max_frame_index)
+
+    flines = []
+    for frame, color, name in zip(frames, matplotlib.colors.TABLEAU_COLORS, names):
+        fline = sns.lineplot(frame, x='index', y='FLOPS', estimator=None, marker='+', label=name,
+                             color=color, markeredgecolor=color, linestyle='--', linewidth=1)
+        if args.flops_only:
+            ax.hlines(frame['FLOPS'].to_numpy().mean(), xmin=0, xmax=max_frame_index, color=color)
+
+    leglines = [matplotlib.lines.Line2D([0],[0], color=c, linestyle='--', linewidth=1, marker='+', markeredgecolor=c)
+                for f,c in zip(frames, matplotlib.colors.TABLEAU_COLORS)]
+    #plt.legend(labels=names, loc='best')
+    #print(names)
+    ax.hlines(0.0, xmin=0, xmax=max_frame_index, color='black', zorder=-1)
+    plt.legend(leglines, names, loc='best')
+    plt.show()
+
+
 if __name__ == '__main__':
     args = parse()
-    frames = load(args)
-    for frame in frames:
-        observations(frame, args)
-
-    fig, ax = plt.subplots()
-    if not args.flops_only:
-        lines = []
-        mpl_lines = []
+    frames, names = load(args)
+    if args.stats:
         for frame in frames:
-            #newline = sns.lineplot(frame, x='elapsed_sec', y='FLOPS', estimator=None, marker='.')
-            newline = sns.lineplot(frame, x='index', y='elapsed_diff', estimator=None, marker='.')
-            lines.append(newline)
-            mpl_lines.extend(newline.lines)
-        #ax.hlines(0.0, xmin=0, xmax=max([max(frame['elapsed_sec']) for frame in frames]))
-        ax.hlines(0.0, xmin=0, xmax=max([max(frame['index']) for frame in frames]))
-        ax.hlines(args.timeout, xmin=0, xmax=max([max(frame['index']) for frame in frames]))
-
-    for frame, color in zip(frames, matplotlib.colors.TABLEAU_COLORS):
-        sns.lineplot(frame, x='index', y='FLOPS', estimator=None, marker='+',
-                     color=color, markeredgecolor=color, linestyle='--', linewidth=1)
-        if args.flops_only:
-            ax.hlines(frame['FLOPS'].to_numpy().mean(), xmin=0, xmax=max([max(frame['index']) for frame in frames]), color=color)
-
-    #plt.legend(labels=nice_names, loc='best')
-    plt.show()
+            observations(frame, args)
+    if not args.no_plots:
+        visualizations(frames, args)
 
