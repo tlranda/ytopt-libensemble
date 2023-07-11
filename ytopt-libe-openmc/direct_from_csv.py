@@ -2,6 +2,7 @@ import argparse
 import time
 import pandas as pd
 import numpy as np
+import os
 from plopper import Plopper
 
 def build(prs=None):
@@ -32,15 +33,15 @@ def load(args):
     return pd.concat(frames)
 
 def evaluate_csvs(data, args):
-    plopper_obj = Plopper("speed3d.sh", args.outdir)
+    plopper_obj = Plopper("openmc.sh", args.outdir)
     params = data.columns.tolist()
     results = []
     start_time = time.time()
     for idx, line in data.iterrows():
         line = line.tolist()
         # For OpenMC Plopper, we need to prepend this
-        os.system("./processexe.pl exe.pl " +str(line[4])+ " " +str(line[5])+ " " +str(value[6]))
-        os.environ["OMP_NUM_THREADS"] = str(value[4])
+        os.system("./processexe.pl exe.pl " +str(line[4])+ " " +str(line[5])+ " " +str(line[6]))
+        os.environ["OMP_NUM_THREADS"] = str(line[4])
         result = plopper_obj.findRuntime(line, params, 1)
         res_time = time.time()
         results.append(line + [result, res_time-start_time])
@@ -63,13 +64,14 @@ def export(data, results, args):
     # Remaining columns + our two added values from the plopper running
     frame = pd.DataFrame(results, columns=original_columns+['objective','elapsed_sec'])
     frame.to_csv(args.csv, index=False)
+    print(f"Exported to {args.csv}")
 
 def main(args=None):
     args = parse(args=args)
     data = load(args)
     results = evaluate_csvs(data, args)
     export(data, results, args)
-    print(results)
+    #print(results)
 
 if __name__ == '__main__':
     main()
