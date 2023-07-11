@@ -1,6 +1,6 @@
 #!/bin/bash -x
-#COBALT -t 09:00:00
-#COBALT -n 513
+#COBALT -t 03:00:00
+#COBALT -n 129
 #COBALT --attrs filesystems=home,grand,eagle
 #COBALT -A EE-ECP
 #COBALT -q default
@@ -8,11 +8,12 @@
 source /home/trandall/theta_knl_heffte_env.sh;
 cd /home/trandall/ytune_23/tlranda-ytopt-libensemble/ytopt-libe-heffte/polaris/combine;
 
-app_scales=( 128 );
-mpi_ranks=( 64 128 256 512 1024 4096 8192 );
-# nodes =    1   2   4   8   16   64  128
+app_scales=( 64 128 256 512 1024 );
+mpi_ranks=( 2048 );
+#mpi_ranks=( 64 128 256 512 1024 2048 4096 8192 );
+# nodes =    1   2   4   8   16   32   64  128
 workers=( 4 );
-# MAX nodes = 128 * 4 + 1 = 513 (12% cluster capacity)
+# MAX nodes = 32 * 4 + 1 = 129 (<3% cluster capacity)
 # THETA has MAX 4392 on DEFAULT queue
 calls=0;
 for app_scale in ${app_scales[@]}; do

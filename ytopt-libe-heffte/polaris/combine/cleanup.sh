@@ -1,1 +1,1 @@
-rm -r ensemble* *.cobaltlog *.error *.output ensemble.log libE_* out.txt ytopt.log *.npy *.pickle *.job *.out
+rm -r ensemble* libE_* ytopt.log

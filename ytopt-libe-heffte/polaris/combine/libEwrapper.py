@@ -1,6 +1,6 @@
 import subprocess
 import argparse
-import os, stat
+import os, stat, shutil
 
 def build():
     parser = argparse.ArgumentParser()
@@ -48,7 +48,11 @@ def build():
     # FILES
     files = parser.add_argument_group("Files", "Arguments that dictate input and output files")
     files.add_argument("--libensemble-target", type=str, default="run_ytopt.py",
-                        help="Script invoked as libEnsemble caller (default: %(default)s)")
+                        help="Template script invoked as libEnsemble caller (default: %(default)s)")
+    files.add_argument("--libensemble-export", type=str, default="run_ytopt.py",
+                        help="Perform modifications to template script to this name -- useful if scheduling multiple jobs that could simultaneously edit the template (default: %(default)s)")
+    files.add_argument("--libensemble-randomization", action="store_true",
+                        help="Add randomization to customized libensemble export name (default: NOT added)")
     files.add_argument("--generated-script", type=str, default="qsub.batch",
                         help="Qsub script is written to this location, then executed (default: %(default)s)")
     files.add_argument("--display-results", action='store_true',
@@ -87,24 +91,33 @@ def parse(prs=None, args=None):
     else:
         args.cpu_override = str(args.cpu_override)
     args.gpu_enabled = str(args.gpu_enabled)
+    if args.libensemble_randomization:
+        import secrets
+        try:
+            args.libensemble_export, extension = args.libensemble_export.rsplit('.',1)
+        except ValueError:
+            extension = 'py'
+        args.libensemble_export += secrets.token_hex(nbytes=4)
+        args.libensemble_export += '.'+extension
     # Designated sed arguments
     args.designated_sed = {
-        'mpi_ranks': [(args.libensemble_target, "s/MPI_RANKS = [0-9]*/MPI_RANKS = {}/"),],
-        'worker_timeout': [(args.libensemble_target, "s/'app_timeout': [0-9]*,/'app_timeout': {},/")],
-        'application_scale': [(args.libensemble_target, "s/APP_SCALE = [0-9]*/APP_SCALE = {}/")],
-        'ensemble_dir_path': [(args.libensemble_target, "s/^ENSEMBLE_DIR_PATH = .*/ENSEMBLE_DIR_PATH = {}/")],
-        'machine_identifier': [(args.libensemble_target, "s/MACHINE_IDENTIFIER = .*/MACHINE_IDENTIFIER = {}/")],
-        'cpu_override': [(args.libensemble_target, "s/cpu_override = .*/cpu_override = {}/")],
-        'gpu_enabled': [(args.libensemble_target, "s/gpu_enabled = .*/gpu_enabled = {}/")],
-        'seed_configspace': [(args.libensemble_target, "s/CONFIGSPACE_SEED = .*/CONFIGSPACE_SEED = {}/")],
-        'seed_ytopt': [(args.libensemble_target, "s/YTOPT_SEED = .*/YTOPT_SEED = {}/")],
-        'seed_numpy': [(args.libensemble_target, "s/NUMPY_SEED = .*/NUMPY_SEED = {}/")],
+        'mpi_ranks': [(args.libensemble_export, "s/MPI_RANKS = [0-9]*/MPI_RANKS = {}/"),],
+        'worker_timeout': [(args.libensemble_export, "s/'app_timeout': [0-9]*,/'app_timeout': {},/")],
+        'application_scale': [(args.libensemble_export, "s/APP_SCALE = [0-9]*/APP_SCALE = {}/")],
+        'ensemble_dir_path': [(args.libensemble_export, "s/^ENSEMBLE_DIR_PATH = .*/ENSEMBLE_DIR_PATH = {}/")],
+        'machine_identifier': [(args.libensemble_export, "s/MACHINE_IDENTIFIER = .*/MACHINE_IDENTIFIER = {}/")],
+        'cpu_override': [(args.libensemble_export, "s/cpu_override = .*/cpu_override = {}/")],
+        'gpu_enabled': [(args.libensemble_export, "s/gpu_enabled = .*/gpu_enabled = {}/")],
+        'seed_configspace': [(args.libensemble_export, "s/CONFIGSPACE_SEED = .*/CONFIGSPACE_SEED = {}/")],
+        'seed_ytopt': [(args.libensemble_export, "s/YTOPT_SEED = .*/YTOPT_SEED = {}/")],
+        'seed_numpy': [(args.libensemble_export, "s/NUMPY_SEED = .*/NUMPY_SEED = {}/")],
     }
     return args
 
 if __name__ == '__main__':
     args = parse()
     # Make all substitutions based on arguments
+    shutil.copy2(args.libensemble_target, args.libensemble_export)
     for (sed_arg, substitution_specs) in args.designated_sed.items():
         for (target_file, substitution) in substitution_specs:
             args_value = getattr(args, sed_arg)
@@ -162,7 +175,7 @@ echo;
 # - Workers submit tasks to the nodes in the job available via scheduler (mpirun, aprun, etc) in plopper
 
 # Name of calling script
-export EXE={args.libensemble_target}
+export EXE={args.libensemble_export}
 
 # Communication Method
 export COMMS="--comms {args.comms}"
@@ -192,24 +205,30 @@ echo;
                                     stat.S_IRGRP | stat.S_IXGRP |
                                     stat.S_IROTH | stat.S_IXOTH)
     print("OK!")
+    ensemble_operating_dir = f"./ensemble_{args.ensemble_dir_path[1:-1]}"
     if args.launch_job:
         proc = subprocess.run(f"./{args.generated_script}")
-        migrated_job_script = f"./ensemble_{args.ensemble_dir_path[1:-1]}/{args.generated_script}"
+        migrated_job_script = f"{ensemble_operating_dir}/{args.generated_script}"
         os.rename(args.generated_script, migrated_job_script)
         print("Job script migrated to ensemble directory")
-        try:
-            os.rename('ensemble.log', f"./ensemble_{args.ensemble_dir_path[1:-1]}/ensemble.log")
-        except:
-            print("Ensemble logs could not be migrated")
-        else:
-            print("Ensemble logs migrated to ensemble directory")
+        migrations = [('ensemble.log', f"{ensemble_operating_dir}/ensemble.log", "Ensemble logs"),]
+        # If the target was modified in-place, do NOT move it
+        if args.libensemble_target != args.libensemble_export:
+            migrations.append((args.libensemble_export, f"{ensemble_operating_dir}/{args.libensemble_export}", "LibEnsemble script"))
+        for migration_from, migration_to, identifier in migrations:
+            try:
+                os.rename(migration_from, migration_to)
+            except:
+                print(f"{identifier} could not be migrated")
+            else:
+                print(f"{identifier} migrated to ensemble directory")
         if proc.returncode == 0 and args.display_results:
             import pandas as pd
             print("Finished evaluations")
-            print(pd.read_csv(f"./ensemble_{args.ensemble_dir_path[1:-1]}/manager_results.csv"))
+            print(pd.read_csv(f"{ensemble_operating_dir}/manager_results.csv"))
             try:
                 print("Unfinished evaluations")
-                print(pd.read_csv(f"./ensemble_{args.ensemble_dir_path[1:-1]}/unfinished_results.csv"))
+                print(pd.read_csv(f"{ensemble_operating_dir}/unfinished_results.csv"))
             except:
                 print("No unfinished evaluations to view")
 

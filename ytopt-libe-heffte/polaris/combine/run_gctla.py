@@ -45,7 +45,29 @@ num_sim_workers = nworkers - 1  # Subtracting one because one worker will be the
 
 # Refer to run_ytopt version if user args are needed for run_gctla
 user_args = {}
-user_args.update({'max-evals': 10})
+#user_args.update({'max-evals': 10})
+
+# Memo-ize whenever an argument can start and capstone end with length of the list
+start_arg_idxs = [_ for _, e in enumerate(user_args_in) if e.startswith('--')]+[len(user_args_in)]
+for meta_idx, idx in enumerate(start_arg_idxs[:-1]):
+    entry = user_args_in[idx]
+    if '=' in entry:
+        split = entry.split('=')
+        key = split[0].lstrip('--')
+        value = split[1]
+    else:
+        # If = is not used, may have a list of arguments that follow
+        key = entry.lstrip('--')
+        until_index = start_arg_idxs[meta_idx+1] # Until start of next argument (or end of the list)
+        value = user_args_in[idx+1:until_index]
+        # One-element lists should just be their value (as if using the '=' operator)
+        if len(value) == 1:
+            value = value[0]
+    user_args[key] = value
+
+req_settings = ['max-evals', 'input']
+assert all([opt in user_args for opt in req_settings]), \
+        "Required settings missing. Specify each setting in " + str(req_settings)
 
 # Variables that will be sed-edited to control scaling
 APP_SCALE = 64
@@ -169,6 +191,7 @@ model.fit(data_trimmed)
 sampled = model.sample_from_conditions(conditions)[:user_args['max-evals']]
 print(f"Model samples a bunch of stuff for you {sampled}")
 
+"""
 # Create problem instance to evaluate configurations
 class stub2():
     def __init__(self):
@@ -177,6 +200,7 @@ class stub2():
         self.counter += 1
         return -1. + self.counter
 problem = stub2()
+"""
 
 # Fetch problem instance and set its space based on alterations
 import gc_tla_problem
