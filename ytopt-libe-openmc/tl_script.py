@@ -15,7 +15,7 @@ from sdv.constraints import ScalarRange
 # Customize behavior
 dirtarget = "xingfu_openmc" # Dir to crawl for data
 cutoff = 0.3 # Training cutoff
-GPU_TARGET = 64 # Number of GPUs to sample for
+GPU_TARGET = 128 # Number of GPUs to sample for
 N_CONFIGS = 100000 # Representation of space size
 IDEAL = 0.10 # Target for GC to identify
 ATTRITION = 0.05 # Proportion of actually ideal samples the GC cannot sample after fitting
@@ -32,7 +32,7 @@ def hypergeo(i,p,t,k):
     return (comb(i,t)*comb((p-i),(k-t))) / comb(p,k)
 
 # Load data
-static_imports = [f"{dirtarget}/{_}" for _ in os.listdir(dirtarget)]
+static_imports = [f"{dirtarget}/{_}" for _ in os.listdir(dirtarget) if '128' not in _]
 loaded = []
 for _ in static_imports:
     csv = pd.read_csv(_)

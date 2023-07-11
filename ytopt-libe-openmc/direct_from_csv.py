@@ -42,6 +42,7 @@ def evaluate_csvs(data, args):
         # For OpenMC Plopper, we need to prepend this
         os.system("./processexe.pl exe.pl " +str(line[4])+ " " +str(line[5])+ " " +str(line[6]))
         os.environ["OMP_NUM_THREADS"] = str(line[4])
+        #result = np.random.rand()
         result = plopper_obj.findRuntime(line, params, 1)
         res_time = time.time()
         results.append(line + [result, res_time-start_time])
