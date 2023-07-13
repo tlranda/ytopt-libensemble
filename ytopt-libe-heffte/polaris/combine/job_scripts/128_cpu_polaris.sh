@@ -8,7 +8,7 @@
 source /home/trandall/polaris_cpu_heffte_env.sh;
 cd /home/trandall/ytune_23/tlranda-ytopt-libensemble/ytopt-libe-heffte/polaris/combine;
 
-app_scales=( 64 );
+app_scales=( 128 );
 mpi_ranks=( 64 128 256 512 1024 );
 #mpi_ranks=( 64 128 256 512 1024 4096 7872 );
 #  nodes =    1   2   4   8   16   64  123
