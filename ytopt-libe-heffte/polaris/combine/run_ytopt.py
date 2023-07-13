@@ -64,7 +64,7 @@ assert all([opt in user_args for opt in req_settings]), \
 
 # Variables that will be sed-edited to control scaling
 APP_SCALE = 1024
-MPI_RANKS = 8
+MPI_RANKS = 64
 # SEEDING
 CONFIGSPACE_SEED = 1234
 YTOPT_SEED = 2345
@@ -238,8 +238,8 @@ here = os.getcwd() + '/'
 libE_specs['use_worker_dirs'] = True
 libE_specs['sim_dirs_make'] = False  # Otherwise directories separated by each sim call
 # Copy or symlink needed files into unique directories
-libE_specs['sim_dir_symlink_files'] = [here + f for f in ['speed3d.sh', 'plopper.py', 'set_affinity_gpu_polaris.sh']]
-ENSEMBLE_DIR_PATH = "PolarisTimeout_1024_75258fed"
+libE_specs['sim_dir_symlink_files'] = [here + f for f in ['speed3d.sh', 'speed3d_no_gpu_aware.sh', 'gpu_cleanup.sh', 'plopper.py', 'set_affinity_gpu_polaris.sh']]
+ENSEMBLE_DIR_PATH = "PolarisTimeout_1024_b33d5cc0"
 libE_specs['ensemble_dir_path'] = f'./ensemble_{ENSEMBLE_DIR_PATH}'
 #if you need to manually specify resource information, ie:
 #    libE_specs['resource_info'] = {'cores_on_node': (64,256), 'gpus_on_node': 0}

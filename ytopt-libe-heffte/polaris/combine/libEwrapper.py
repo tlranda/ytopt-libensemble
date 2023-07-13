@@ -209,9 +209,8 @@ echo;
     if args.launch_job:
         proc = subprocess.run(f"./{args.generated_script}")
         migrated_job_script = f"{ensemble_operating_dir}/{args.generated_script}"
-        os.rename(args.generated_script, migrated_job_script)
-        print("Job script migrated to ensemble directory")
-        migrations = [('ensemble.log', f"{ensemble_operating_dir}/ensemble.log", "Ensemble logs"),]
+        migrations = [(args.generated_script, migrated_job_script, "Job Script"),
+                      ('ensemble.log', f"{ensemble_operating_dir}/ensemble.log", "Ensemble logs"),]
         # If the target was modified in-place, do NOT move it
         if args.libensemble_target != args.libensemble_export:
             migrations.append((args.libensemble_export, f"{ensemble_operating_dir}/{args.libensemble_export}", "LibEnsemble script"))

@@ -75,31 +75,75 @@ def myobj(point: dict, params: list, workerID: int) -> float:
         # Topology interpretation replaces floats with MPI rank configuration based on "tall" vs "broad"
         point = topology_interpret(point)
         machine_info = point.pop('machine_info')
+        # Permit gpu-based mpiexec to isolate to this worker
+        worker_nodefile = None
+        if 'PBS_NODEFILE' in os.environ:
+            worker_nodefile = f"./worker_{workerID}_nodefile"
+            with open(os.environ['PBS_NODEFILE'], 'r') as f:
+                avail_nodes = [_.rstrip() for _ in f.readlines()]
+            try:
+                with open(worker_nodefile,"r") as f:
+                    worker_nodes = [_.rstrip() for _ in f.readlines()]
+                for node in worker_nodes:
+                    # Raise ValueError if cached node is not in the nodefile list -- trigger recompute
+                    found_index = avail_nodes.index(node)
+            except (FileNotFoundError, ValueError):
+                # If there's an extra node, it's for the generator
+                if len(avail_nodes) > 1 and len(avail_nodes) % machine_info['libE_workers'] == 1:
+                    avail_nodes = avail_nodes[1:]
+                # Take contiguous group of nodes for this worker
+                nodes_per_worker = len(avail_nodes) // machine_info['libE_workers']
+                # LibEnsemble workerID's are 1-indexed and the generator is always worker #1
+                # We need to provision zero-indexed but the list should start at 2
+                worker_start = (workerID-2) * nodes_per_worker
+                worker_end = (workerID-1) * nodes_per_worker
+                worker_nodes = avail_nodes[worker_start : worker_end]
+                # Save these nodes to file
+                with open(worker_nodefile, "w") as f:
+                    f.write("\n".join(worker_nodes)+"\n")
+
         # Machine identifier changes the proper invocation to utilize allocated resources
         # Also customize timeout based on application scale per system
-        known_timeouts = {}
         if 'polaris' in machine_info['identifier']:
-            machine_format_str = "mpiexec -n {mpi_ranks} --ppn {ranks_per_node} --depth {depth} --cpu-bind depth --env OMP_NUM_THREADS={depth} sh ./set_affinity_gpu_polaris.sh {interimfile}"
-            polaris_timeouts = {64: 20.0, 128: 20.0, 256: 20.0, 512: 20.0}
-            known_timeouts.update(polaris_timeouts)
+            if worker_nodefile is None:
+                machine_format_str = "mpiexec -n {mpi_ranks} --ppn {ranks_per_node} --depth {depth} --cpu-bind depth --env OMP_NUM_THREADS={depth} sh ./set_affinity_gpu_polaris.sh {interimfile}"
+            else:
+                machine_format_str = "mpiexec -n {mpi_ranks} --ppn {ranks_per_node} --depth {depth} --cpu-bind depth --env OMP_NUM_THREADS={depth} --hostfile "+worker_nodefile+" sh ./set_affinity_gpu_polaris.sh {interimfile}"
         elif 'theta' in machine_info['identifier']:
             machine_format_str = "aprun -n {mpi_ranks} -N {ranks_per_node} -cc depth -d {depth} -j {j} -e OMP_NUM_THREADS={depth} sh {interimfile}"
-            theta_timeouts = {64: 40.0, 128: 80.0, 256: 120.0}
-            known_timeouts.update(theta_timeouts)
         else:
             machine_format_str = None
+
+        # Set known timeouts to be more specific
+        known_timeouts = {}
+        if 'knl' in machine_info['identifier'] or 'cpu' in machine_info['identifier']:
+            cpu_timeouts = {64: 40.0, 128: 80.0, 256: 120.0, 512: 300.0, 1024: 300.0, }
+            known_timeouts.update(cpu_timeouts)
+        elif 'gpu' in machine_info['identifier']:
+            gpu_timeouts = {64: 20.0, 128: 20.0, 256: 30.0, 512: 40.0, 1024: 60.0, }
+            known_timeouts.update(gpu_timeouts)
         if point['p1'] in known_timeouts.keys():
             machine_info['app_timeout'] = known_timeouts[point['p1']]
+
+        # Swap plopper templates / alter arguments when needed
+        plopper_template = "./speed3d.sh"
+        if point['p1'] >= 1024:
+            # Prevent indexing overflow errors
+            point['p0'] += "-long"
+            # Disable GPU aware MPI so we can run successfully
+            # No need to check if on cpu--this argument shouldn't have an affect in that case
+            plopper_template = "./speed3d_no_gpu_aware.sh"
         print(f"[worker {workerID} - obj] receives point {point}")
         x = np.array(point.values())
         def plopper_func(x, params):
             # Should utilize machine identifier
-            obj = Plopper('./speed3d.sh', './', machine_format_str)
+            obj = Plopper(plopper_template, './', machine_format_str)
             x = np.asarray_chkfinite(x)
             value = [point[param] for param in params]
             os.environ["OMP_NUM_THREADS"] = str(value[9])
             params = [i.upper() for i in params]
             result = obj.findRuntime(value, params, workerID,
+                                     machine_info['libE_workers'],
                                      machine_info['app_timeout'],
                                      machine_info['mpi_ranks'],
                                      machine_info['ranks_per_node'],

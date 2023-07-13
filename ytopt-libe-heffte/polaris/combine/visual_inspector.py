@@ -51,7 +51,7 @@ def load(args):
             else:
                 print(f"No manager results -- substituting with worker results")
         # Invert flops metric for evaluation
-        frame["FLOPS"] = -1 * frame["FLOPS"]
+        frame["GFLOPS"] = -1 * frame["FLOPS"]
         # Fetch # workers for data preparation purposes
         max_workers = frame.iloc[0]['libE_workers']
         # Put ORIGINAL index in first
@@ -114,7 +114,7 @@ def observations(frame, args):
     else:
         print("No unusual elapsed seconds timings")
     # Final check on frame contents for a glimpse of anything else that may be weird
-    print(frame[['index','libE_id','elapsed_sec','elapsed_diff','continuous_diff','FLOPS']])
+    print(frame[['index','libE_id','elapsed_sec','elapsed_diff','continuous_diff','GFLOPS']])
     print()
 
 def visualizations(frames, args):
@@ -122,7 +122,7 @@ def visualizations(frames, args):
     max_frame_index = max([max(frame['index']) for frame in frames])
     if not args.flops_only:
         for frame, name in zip(frames, names):
-            #newline = sns.lineplot(frame, x='elapsed_sec', y='FLOPS', estimator=None, marker='.')
+            #newline = sns.lineplot(frame, x='elapsed_sec', y='GFLOPS', estimator=None, marker='.')
             newline = sns.lineplot(frame, x='index', y='elapsed_diff', estimator=None, marker='.', label=name)
         #ax.hlines(0.0, xmin=0, xmax=max([max(frame['elapsed_sec']) for frame in frames]))
         ax.hlines(0.0, xmin=0, xmax=max_frame_index)
@@ -130,10 +130,10 @@ def visualizations(frames, args):
 
     flines = []
     for frame, color, name in zip(frames, matplotlib.colors.TABLEAU_COLORS, names):
-        fline = sns.lineplot(frame, x='index', y='FLOPS', estimator=None, marker='+', label=name,
+        fline = sns.lineplot(frame, x='index', y='GFLOPS', estimator=None, marker='+', label=name,
                              color=color, markeredgecolor=color, linestyle='--', linewidth=1)
         if args.flops_only:
-            ax.hlines(frame['FLOPS'].to_numpy().mean(), xmin=0, xmax=max_frame_index, color=color)
+            ax.hlines(frame['GFLOPS'].to_numpy().mean(), xmin=0, xmax=max_frame_index, color=color)
 
     leglines = [matplotlib.lines.Line2D([0],[0], color=c, linestyle='--', linewidth=1, marker='+', markeredgecolor=c)
                 for f,c in zip(frames, matplotlib.colors.TABLEAU_COLORS)]

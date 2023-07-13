@@ -69,7 +69,7 @@ class Plopper:
         return result
 
     # Function to find the execution time of the interim file, and return the execution time as cost to the search module
-    def findRuntime(self, x, params, workerID, app_timeout, mpi_ranks, ranks_per_node, n_repeats=1):
+    def findRuntime(self, x, params, workerID, n_workers, app_timeout, mpi_ranks, ranks_per_node, n_repeats=1):
         #print(workerID, x, params)
         dictVal = self.createDict(x, params)
         #print(workerID, dictVal)
@@ -122,6 +122,25 @@ class Plopper:
                         #print("\n".join(check_status.stdout.decode('utf-8').rstrip('\n').split('\n')))
                 else:
                     logged = True
+            # GPU-cleanup
+            try:
+                if '--hostfile' in self.cmd_template:
+                    template_list = self.cmd_template.split()
+                    nodefile = template_list[template_list.index('--hostfile')+1]
+                    with open(nodefile, 'r') as f:
+                        n_nodes = len(f.readlines())
+                    cleanup_cmd = f"mpiexec -n {n_nodes} --ppn 1 --hostfile {nodefile} ./gpu_cleanup.sh speed3d_r2c"
+                    status = subprocess.run(cleanup_cmd, shell=True)
+                    if status.returncode != 0:
+                        raise ValueError(f"Cleanup Command failed to run (Return code: {status.returncode})")
+            except Exception as e:
+                BadGPUCleanup = f"[worker {workerID} - plopper - GPU CLEANUP] Failed to execute properly ({e.__class__})"
+                for attr in ['msg', 'message', 'args']:
+                    if hasattr(e, attr):
+                        BadGPUCleanup += f" -- {getattr(e,attr)}"
+                warnings.warn(BadGPUCleanup)
+
+            # Fetch results
             if logged and execution_status.returncode != 0:
                 # Evaluation code 2.* reserved for Execution errors
                 results.append(2. + execution_status.returncode/1000)
