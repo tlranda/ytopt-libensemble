@@ -65,7 +65,7 @@ for meta_idx, idx in enumerate(start_arg_idxs[:-1]):
             value = value[0]
     user_args[key] = value
 
-req_settings = ['max-evals', 'input']
+req_settings = ['max-evals', 'input', 'constraint-sys', 'constraint-app']
 assert all([opt in user_args for opt in req_settings]), \
         "Required settings missing. Specify each setting in " + str(req_settings)
 
@@ -166,7 +166,9 @@ data_trimmed = data[['c0',]+[f'p{_}' for _ in range(10)]+['mpi_ranks']]
 # Create model
 import pdb
 pdb.set_trace()
-conditions = [Condition({'mpi_ranks': 64, 'p1': 64}, num_rows=100)] #max(100, user_args['max-evals']))]
+conditions = [Condition({'mpi_ranks': user_args['constraint-sys'],
+                         'p1': user_args['constraint-app']},
+                        num_rows=100)] #max(100, user_args['max-evals']))]
 metadata = SingleTableMetadata()
 metadata.detect_from_dataframe(data_trimmed)
 constraints = [{'constraint_class': 'ScalarRange',

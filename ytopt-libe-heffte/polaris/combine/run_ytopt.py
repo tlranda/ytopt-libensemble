@@ -39,35 +39,38 @@ from ytopt.search.optimizer import Optimizer
 nworkers, is_manager, libE_specs, user_args_in = parse_args()
 num_sim_workers = nworkers - 1  # Subtracting one because one worker will be the generator
 
-assert len(user_args_in), "learner, etc. not specified, e.g. --learner RF"
-#if not len(user_args_in):
-#    import warnings
-#    warnings.warn("LIBE DEBUG SETTINGS FOR LEARNER/MAX-EVALS USED")
-#    user_args_in = ['--learner=RF', '--max-evals=3']
 user_args = {}
-for entry in user_args_in:
-    if entry.startswith('--'):
-        if '=' not in entry:
-            key = entry.strip('--')
-            value = user_args_in[user_args_in.index(entry)+1]
-        else:
-            split = entry.split('=')
-            key = split[0].strip('--')
-            value = split[1]
 
+# Memo-ize whenever an argument can start and capstone end with length of the list
+start_arg_idxs = [_ for _, e in enumerate(user_args_in) if e.startswith('--')]+[len(user_args_in)]
+for meta_idx, idx in enumerate(start_arg_idxs[:-1]):
+    entry = user_args_in[idx]
+    if '=' in entry:
+        split = entry.split('=')
+        key = split[0].lstrip('--')
+        value = split[1]
+    else:
+        # If = is not used, may have a list of arguments that follow
+        key = entry.lstrip('--')
+        until_index = start_arg_idxs[meta_idx+1] # Until start of next argument (or end of the list)
+        value = user_args_in[idx+1:until_index]
+        # One-element lists should just be their value (as if using the '=' operator)
+        if len(value) == 1:
+            value = value[0]
     user_args[key] = value
 
-req_settings = ['learner','max-evals']
+req_settings = ['max-evals', 'learner']
 assert all([opt in user_args for opt in req_settings]), \
-    "Required settings missing. Specify each setting in " + str(req_settings)
-
+        "Required settings missing. Specify each setting in " + str(req_settings)
 
 # Variables that will be sed-edited to control scaling
-APP_SCALE = 1024
-MPI_RANKS = 64
+APP_SCALE = 256
+MPI_RANKS = 512
 # SEEDING
 CONFIGSPACE_SEED = 1234
 YTOPT_SEED = 2345
+
+# Load model
 cs = CS.ConfigurationSpace(seed=CONFIGSPACE_SEED)
 # arg1  precision
 p0 = CSH.CategoricalHyperparameter(name='p0', choices=["double", "float"], default_value="float")
@@ -152,14 +155,14 @@ p9 = CSH.OrdinalHyperparameter(name='p9', sequence=sequence, default_value=max_d
 cs.add_hyperparameters([p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, c0])
 
 ytoptimizer = Optimizer(
-    num_workers=num_sim_workers,
-    space=cs,
-    learner=user_args['learner'],
-    liar_strategy='cl_max',
-    acq_func='gp_hedge',
-    set_KAPPA=1.96,
-    set_SEED=YTOPT_SEED,
-    set_NI=10,
+    num_workers = num_sim_workers,
+    space = cs,
+    learner = user_args['learner'],
+    liar_strategy = 'cl_max',
+    acq_func = 'gp_hedge',
+    set_KAPPA = 1.96,
+    set_SEED = YTOPT_SEED,
+    set_NI = 10,
 )
 
 MACHINE_IDENTIFIER = "tbd"
@@ -217,9 +220,9 @@ gen_specs = {
                  ['libE_id'] +\
                  ['libE_workers'],
     'user': {
-        'ytoptimizer': ytoptimizer,  # provide optimizer to generator function
-        'num_sim_workers': num_sim_workers,
         'machine_info': MACHINE_INFO,
+        'ytoptimizer': ytoptimizer,
+        'num_sim_workers': num_sim_workers,
     },
 }
 
