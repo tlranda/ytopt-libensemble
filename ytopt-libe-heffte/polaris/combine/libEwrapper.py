@@ -41,6 +41,12 @@ def build():
                         help="Add randomization to customized ensemble-dir-path's (default: NOT added)")
     ensemble.add_argument("--launch-job", action='store_true',
                         help="Launch job once prepared (default: NOT launched, job script only written)")
+    # GaussianCopula
+    gc = parser.add_argument_group("GaussianCopula", "Arguments for Gaussian Copula (must use --libensemble-target=run_gctal.py)")
+    gc.add_argument("--gc-sys", type=int, default=None,
+                    help="# MPI ranks targeted by constrained GC (default: Defers to --mpi-ranks)")
+    gc.add_argument("--gc-app", type=int, default=None,
+                    help="Application size targeted by constrained GC (default: Defers to --application-scale)")
     # SEEDS
     seeds = parser.add_argument_group("Seeds", "Arguments that control randomization seeding")
     seeds.add_argument("--seed-configspace", type=int, default=1234,
@@ -115,6 +121,25 @@ def parse(prs=None, args=None):
             extension = 'py'
         args.libensemble_export += secrets.token_hex(nbytes=4)
         args.libensemble_export += '.'+extension
+    protected = ['run_ytopt.py', 'run_gctla.py']
+    if args.libensemble_export in protected:
+        backup = args.libensemble_export + ".bak"
+        increment = None
+        while os.path.exists(backup):
+            if increment is None:
+                backup += "_1"
+                increment = 1
+            else:
+                increment += 1
+                backup = backup.rsplit("_",1)[0] + str(increment)
+        TemplateOverride = f"Processing will override template {args.libensemble_export}, which may not be desired! Protecting the original template by backing it up to {backup}"
+        warnings.warn(TemplateOverride)
+        shutil.copy2(args.libensemble_export, backup)
+    # Gaussian Copula arguments
+    if args.gc_sys is None:
+        args.gc_sys = args.mpi_ranks
+    if args.gc_app is None:
+        args.gc_app = args.application_scale
     # Designated sed arguments
     args.designated_sed = {
         'mpi_ranks': [(args.libensemble_export, "s/MPI_RANKS = [0-9]*/MPI_RANKS = {}/"),],
@@ -129,6 +154,10 @@ def parse(prs=None, args=None):
         'seed_ytopt': [(args.libensemble_export, "s/YTOPT_SEED = .*/YTOPT_SEED = {}/")],
         'seed_numpy': [(args.libensemble_export, "s/NUMPY_SEED = .*/NUMPY_SEED = {}/")],
     }
+    if 'gc' in args.libensemble_export:
+        args.bonus_runtime_args = f"--constraint-sys {args.gc_sys} --constraint-app {args.gc_app}"
+    else:
+        args.bonus_runtime_args = ""
     return args
 
 if __name__ == '__main__':
@@ -207,7 +236,7 @@ export EVALS="--max-evals {args.max_evals}"
 {env_adjust}
 
 # Launch libE
-pycommand="python $EXE $COMMS $NWORKERS --learner=RF $EVALS" # > out.txt 2>&1"
+pycommand="python $EXE $COMMS $NWORKERS --learner=RF $EVALS {args.bonus_runtime_args}" # > out.txt 2>&1"
 echo "$pycommand";
 eval "$pycommand";
 echo;
