@@ -186,26 +186,24 @@ conditions = [Condition({'mpi_ranks': user_args['constraint-sys'],
                         num_rows=100)] #max(100, user_args['max-evals']))]
 metadata = SingleTableMetadata()
 metadata.detect_from_dataframe(data_trimmed)
-constraints = [{'constraint_class': 'ScalarRange',
+constraints = [{'constraint_class': 'ScalarRange', # App scale limit
                     'constraint_parameters': {
                         'column_name': 'p1',
                         'low_value': 64,
                         'high_value': 2048,
-                        'strict_boundaries': False},
+                        'strict_boundaries': False,},
                     },
-               {'constraint_class': 'ScalarRange',
+               {'constraint_class': 'ScalarRange', # System scale limit
                     'constraint_parameters': {
                         'column_name': 'mpi_ranks',
                         'low_value': 1,
-                        'high_value': 16384,},
+                        'high_value': 16384,
+                        'strict_boundaries': False,},
                     },
               ]
 model = GaussianCopula(metadata, enforce_min_max_values=False)
 model.add_constraints(constraints=constraints)
 model.fit(data_trimmed)
-# THIS SHOULD BE IN GENERATOR (LIBE_ASKTELL), DEMO ONLY:
-sampled = model.sample_from_conditions(conditions)[:user_args['max-evals']]
-print(f"Model samples a bunch of stuff for you {sampled}")
 
 # Fetch problem instance and set its space based on alterations
 import gc_tla_problem
