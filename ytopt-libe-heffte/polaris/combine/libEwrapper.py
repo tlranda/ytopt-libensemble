@@ -5,6 +5,8 @@ import warnings
 
 def build():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--error-demotion", action='store_true',
+                        help="Demote wrapper errors to warnings, may permit unwanted behaviors (default: Error and cease operation)")
     #SCALING
     scaling = parser.add_argument_group("Scaling", "Arguments that control scale of evaluated tests")
     scaling.add_argument("--mpi-ranks", type=int, default=2,
@@ -70,6 +72,7 @@ def build():
     return parser
 
 def parse(prs=None, args=None):
+    WarningsAsErrors = "Error thrown due to warning (disable via --error-demotion=True)"
     if prs is None:
         prs = build()
     if args is None:
@@ -103,6 +106,8 @@ def parse(prs=None, args=None):
     if args.system not in args.machine_identifier:
         MI_System_Mismatch = f"Indicated system ({args.system}) name not found in machine identifier ({args.machine_identifier}). This could result in improper #cpu_ranks_per_node and lead to over- or under-subscription of resources!"
         warnings.warn(MI_System_Mismatch)
+        if not args.error_demotion:
+            raise ValueError(WarningsAsErrors)
     match args.system:
         case "polaris":
             args.cpu_ranks_per_node = 64
@@ -132,8 +137,12 @@ def parse(prs=None, args=None):
             else:
                 increment += 1
                 backup = backup.rsplit("_",1)[0] + str(increment)
-        TemplateOverride = f"Processing will override template {args.libensemble_export}, which may not be desired! Protecting the original template by backing it up to {backup}"
+        TemplateOverride = f"Processing will override template {args.libensemble_export}, which may not be desired!"
+        if args.error_demotion:
+            TemplateOverride += f" Protecting the original template by backing it up to {backup}"
         warnings.warn(TemplateOverride)
+        if not args.error_demotion:
+            raise ValueError(WarningsAsErrors)
         shutil.copy2(args.libensemble_export, backup)
     # Gaussian Copula arguments
     if args.gc_sys is None:
