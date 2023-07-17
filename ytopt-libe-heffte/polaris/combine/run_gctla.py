@@ -67,7 +67,13 @@ for meta_idx, idx in enumerate(start_arg_idxs[:-1]):
 
 req_settings = ['max-evals', 'input', 'constraint-sys', 'constraint-app']
 assert all([opt in user_args for opt in req_settings]), \
-        "Required settings missing. Specify each setting in " + str(req_settings)
+        f"Required settings missing: {set(req_settings).difference(set(user_args.keys()))}."+"\n"+\
+        f"Specify each setting in {req_settings}"
+
+# Type-fixing for args
+int_args = ['max-evals', 'constraint-sys', 'constraint-app']
+for arg in int_args:
+    user_args[arg] = int(user_args[arg])
 
 # Variables that will be sed-edited to control scaling
 APP_SCALE = 1024
@@ -160,12 +166,21 @@ p9 = CSH.OrdinalHyperparameter(name='p9', sequence=sequence, default_value=max_d
 
 cs.add_hyperparameters([p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, c0])
 
+MACHINE_IDENTIFIER = "tbd"
+print(f"Identifying machine as {MACHINE_IDENTIFIER}"+"\n")
+MACHINE_INFO = {
+    'identifier': MACHINE_IDENTIFIER,
+    'mpi_ranks': MPI_RANKS,
+    'ranks_per_node': ranks_per_node,
+    'gpu_enabled': gpu_enabled,
+    'libE_workers': num_sim_workers,
+    'app_timeout': 300,
+}
+
 # Load data
 data = pd.concat([pd.read_csv(_) for _ in user_args['input']])
 data_trimmed = data[['c0',]+[f'p{_}' for _ in range(10)]+['mpi_ranks']]
 # Create model
-import pdb
-pdb.set_trace()
 conditions = [Condition({'mpi_ranks': user_args['constraint-sys'],
                          'p1': user_args['constraint-app']},
                         num_rows=100)] #max(100, user_args['max-evals']))]
@@ -192,34 +207,17 @@ model.fit(data_trimmed)
 sampled = model.sample_from_conditions(conditions)[:user_args['max-evals']]
 print(f"Model samples a bunch of stuff for you {sampled}")
 
-"""
-# Create problem instance to evaluate configurations
-class stub2():
-    def __init__(self):
-        self.counter = 0
-    def objective(self, point, specs, workerID):
-        self.counter += 1
-        return -1. + self.counter
-problem = stub2()
-"""
-
 # Fetch problem instance and set its space based on alterations
 import gc_tla_problem
-app_scale_name = dict((v,k) for (k,v) in gc_tla_problem.lookup_ival.items())[APP_SCALE]
-problem = getattr(gc_tla_problem, f"{app_scale_name}_{NODE_COUNT}")
+app_scale_name = gc_tla_problem.lookup_ival[(NODE_COUNT, APP_SCALE)]
+problem = getattr(gc_tla_problem, app_scale_name) #f"{app_scale_name}_{NODE_COUNT}")
+problem.plopper.set_architecture_info(threads_per_node = ranks_per_node,
+                                      gpus = ranks_per_node if gpu_enabled else 0,
+                                      nodes = NODE_COUNT,
+                                      mpi_ranks = MPI_RANKS,
+                                      machine_identifier = MACHINE_IDENTIFIER,
+                                      )
 problem.set_space(cs)
-
-
-MACHINE_IDENTIFIER = "tbd"
-print(f"Identifying machine as {MACHINE_IDENTIFIER}"+"\n")
-MACHINE_INFO = {
-    'identifier': MACHINE_IDENTIFIER,
-    'mpi_ranks': MPI_RANKS,
-    'ranks_per_node': ranks_per_node,
-    'gpu_enabled': gpu_enabled,
-    'libE_workers': num_sim_workers,
-    'app_timeout': 300,
-}
 
 # Declare the sim_f to be optimized, and the input/outputs
 sim_specs = {

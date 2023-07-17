@@ -76,26 +76,29 @@ input_space = [('Categorical',
               ]
 
 def customize_space(self, class_size):
+    # Exception if architecture is not sufficiently defined by self or plopper
+    REQ_ATTRS = {'threads_per_node', 'gpus', 'ranks_per_node'}
+    defined_by_self = [_ for _ in REQ_ATTRS if hasattr(self, _)]
+    REQ_ATTRS = REQ_ATTRS.difference(set(defined_by_self))
+    defined_by_plopper = [_ for _ in REQ_ATTRS if hasattr(self.plopper, _)]
+    REQ_ATTRS = REQ_ATTRS.difference(set(defined_by_plopper))
+    if len(REQ_ATTRS) > 0:
+        raise ValueError("Self and Plopper do not sufficiently define attributes to customize space\nMissing attributes: ", REQ_ATTRS)
+
     altered_space = self.input_space
     self.node_count, self.app_scale = class_size
-    plopper = self.plopper
 
     # App scale sets constant size
     altered_space[1] = ('Constant', {'name': 'p1', 'value': self.app_scale})
 
     # Node scale determines depth scalability
-    self.max_cpus = plopper.threads_per_node
-    print(f"Detected {self.max_cpus} CPUs on this machine")
-
-    self.gpus = plopper.gpus
-    self.ppn = plopper.ranks_per_node
+    self.max_cpus = self.threads_per_node if 'threads_per_node' in defined_by_self else self.plopper.threads_per_node
+    self.gpus = self.gpus if 'gpus' in defined_by_self else self.plopper.gpus
+    self.ppn = self.ranks_per_node if 'ranks_per_node' in defined_by_self else self.plopper.ranks_per_node
     c0_value = 'cufft' if self.gpus > 0 else 'fftw'
     altered_space[10] = ('Constant', {'name': 'c0', 'value': c0_value})
-    print(f"Set PPN to {self.ppn}"+"\n")
 
     self.node_scale = self.node_count * self.ppn
-    print(f"APP_SCALE (AKA Problem Size X, X, X) = {self.app_scale} x3")
-    print(f"NODE_SCALE (AKA System Size X * Y = Z) = {self.node_count} * {self.ppn} = {self.node_scale}")
     # Don't exceed #threads across total ranks
     self.max_depth = self.max_cpus // self.ppn
     sequence = [2**_ for _ in range(1,10) if (2**_) <= self.max_depth]
@@ -111,8 +114,6 @@ def customize_space(self, class_size):
     # Ensure max_depth is always in the list
     if np.log2(self.max_depth)-int(np.log2(self.max_depth)) > 0:
         sequence = sorted(sequence+[self.max_depth])
-    print(f"Depths are based on {self.max_cpus} threads on each node, shared across {self.ppn} MPI ranks on each node")
-    print(f"Selectable depths are: {sequence}"+"\n")
     altered_space[9] = ('Ordinal', {'name': 'p9', 'sequence': sequence, 'default_value': self.max_depth})
     self.input_space = altered_space
 
@@ -129,7 +130,9 @@ class heffte_plopper(LibE_Plopper):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.mpi_ranks = self.ranks_per_node if 'mpi_ranks' not in kwargs else kwargs['mpi_ranks']
+
+    def set_architecture_info(self, **kwargs):
+        super().set_architecture_info(**kwargs)
         # Machine identifier changes proper invocation to utilize allocated resources
         # Also customize timeout based on application scale per system
         self.known_timeouts = {}
@@ -139,7 +142,6 @@ class heffte_plopper(LibE_Plopper):
             self.known_timeouts.update(polaris_timeouts)
         elif 'theta' in self.machine_identifier:
             self.cmd_template = "aprun -n {mpi_ranks} -N {ranks_per_node} -cc depth -d {depth} -j {j} -e OMP_NUM_THREADS={depth} sh {interimfile}"
-            self.threads_per_node = 256
             theta_timeouts = {64: 20.0, 128: 40.0, 256: 60.0}
             self.known_timeouts.update(theta_timeouts)
 

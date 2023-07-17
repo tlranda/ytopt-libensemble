@@ -61,7 +61,13 @@ for meta_idx, idx in enumerate(start_arg_idxs[:-1]):
 
 req_settings = ['max-evals', 'learner']
 assert all([opt in user_args for opt in req_settings]), \
-        "Required settings missing. Specify each setting in " + str(req_settings)
+        f"Required settings missing: {set(req_settings).difference(set(user_args.keys()))}."+"\n"+\
+        f"Specify each setting in {req_settings}"
+# Type-fixing for args
+int_args = ['max-evals', ]
+for arg in int_args:
+    user_args[arg] = int(user_args[arg])
+
 
 # Variables that will be sed-edited to control scaling
 APP_SCALE = 256
