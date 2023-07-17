@@ -1,10 +1,10 @@
 """
-Runs libEnsemble to call the ytopt ask/tell interface in a generator function,
-and the ytopt findRunTime interface in a simulator function.
+Runs libEnsemble to call the GC_TLA interface in a generator function,
+and the GC_TLA interface in a simulator function.
 
 Execute locally via one of the following commands (e.g. 3 workers):
-   mpiexec -np 4 python run_ytopt_xsbench.py
-   python run_ytopt_xsbench.py --nworkers 3 --comms local
+   mpiexec -np 4 python run_gctla.py
+   python run_gctla.py --nworkers 3 --comms local
 
 The number of concurrent evaluations of the objective function will be 4-1=3.
 """
@@ -70,7 +70,7 @@ assert all([opt in user_args for opt in req_settings]), \
         "Required settings missing. Specify each setting in " + str(req_settings)
 
 # Variables that will be sed-edited to control scaling
-APP_SCALE = 64
+APP_SCALE = 1024
 MPI_RANKS = 64
 # SEEDING
 CONFIGSPACE_SEED = 1234
@@ -101,8 +101,12 @@ p8 = CSH.UniformFloatHyperparameter(name='p8', lower=0, upper=1)
 
 
 # Cross-architecture is out-of-scope for now so we determine this for the current platform and leave it at that
-cpu_override = 256
-cpu_ranks_per_node = 64
+cpu_override = None
+gpu_enabled = False
+cpu_ranks_per_node = 1
+
+c0 = CSH.Constant('c0', value='cufft' if gpu_enabled else 'fftw')
+
 if cpu_override is None:
     proc = subprocess.run(['nproc'], capture_output=True)
     if proc.returncode == 0:
@@ -117,8 +121,6 @@ if cpu_override is None:
 else:
     threads_per_node = cpu_override
     print(f"Override indicates {threads_per_node} CPU threads on this machine")
-
-gpu_enabled = False
 if gpu_enabled:
     proc = subprocess.run('nvidia-smi -L'.split(' '), capture_output=True)
     if proc.returncode != 0:
@@ -130,7 +132,6 @@ else:
     ranks_per_node = cpu_ranks_per_node
     print(f"CPU mode; force {ranks_per_node} ranks per node")
 print(f"Set ranks_per_node to {ranks_per_node}"+"\n")
-c0 = CSH.Constant('c0', value='cufft' if gpu_enabled else 'fftw')
 
 NODE_COUNT = max(MPI_RANKS // ranks_per_node,1)
 print(f"APP_SCALE (AKA Problem Size X, X, X) = {APP_SCALE} x3")
@@ -160,9 +161,7 @@ p9 = CSH.OrdinalHyperparameter(name='p9', sequence=sequence, default_value=max_d
 cs.add_hyperparameters([p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, c0])
 
 # Load data
-static_imports = ['logs/ThetaSourceTasks/Theta_1n_128a',
-                  'logs/ThetaSourceTasks/Theta_1n_256a',]
-data = pd.concat([pd.read_csv(_+'/manager_results.csv') for _ in static_imports])
+data = pd.concat([pd.read_csv(_) for _ in user_args['input']])
 data_trimmed = data[['c0',]+[f'p{_}' for _ in range(10)]+['mpi_ranks']]
 # Create model
 import pdb
@@ -174,14 +173,14 @@ constraints = [{'constraint_class': 'ScalarRange',
                     'constraint_parameters': {
                         'column_name': 'p1',
                         'low_value': 64,
-                        'high_value': 1024,
+                        'high_value': 2048,
                         'strict_boundaries': False},
                     },
                {'constraint_class': 'ScalarRange',
                     'constraint_parameters': {
                         'column_name': 'mpi_ranks',
                         'low_value': 1,
-                        'high_value': 8192,},
+                        'high_value': 16384,},
                     },
               ]
 model = GaussianCopula(metadata, enforce_min_max_values=False)
@@ -209,7 +208,7 @@ problem = getattr(gc_tla_problem, f"{app_scale_name}_{NODE_COUNT}")
 problem.set_space(cs)
 
 
-MACHINE_IDENTIFIER = "thetamom2"
+MACHINE_IDENTIFIER = "tbd"
 print(f"Identifying machine as {MACHINE_IDENTIFIER}"+"\n")
 MACHINE_INFO = {
     'identifier': MACHINE_IDENTIFIER,
@@ -217,7 +216,7 @@ MACHINE_INFO = {
     'ranks_per_node': ranks_per_node,
     'gpu_enabled': gpu_enabled,
     'libE_workers': num_sim_workers,
-    'app_timeout': 100,
+    'app_timeout': 300,
 }
 
 # Declare the sim_f to be optimized, and the input/outputs

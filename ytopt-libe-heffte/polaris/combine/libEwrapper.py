@@ -1,6 +1,7 @@
 import subprocess
 import argparse
 import os, stat, shutil
+import warnings
 
 def build():
     parser = argparse.ArgumentParser()
@@ -10,11 +11,14 @@ def build():
                         help="Number of MPI ranks each Worker uses (System Scale; default: %(default)s)")
     scaling.add_argument("--worker-timeout", type=int, default=100,
                         help="Timeout for Worker subprocesses (default: %(default)s)")
-    scaling.add_argument("--application-scale", type=int, choices=[64,128,256,512,1024], default=128,
+    # choices=[64,128,256,512,1024]
+    scaling.add_argument("--application-scale", type=int, default=128,
                         help="Problem size to be optimized (default: %(default)s)")
     # Polaris-*: 64
     # Theta-KNL: 256
     # Theta-GPU: 128
+    scaling.add_argument("--system", choices=["polaris", "theta", "theta-gpu", ], default="theta",
+                        help="System sets default # CPU ranks per node (default: %(default)s)")
     scaling.add_argument("--cpu-override", type=int, default=None,
                         help="Override automatic CPU detection to set max_cpu value (default: Detect)")
     scaling.add_argument("--gpu-enabled", action="store_true",
@@ -90,6 +94,18 @@ def parse(prs=None, args=None):
         args.cpu_override = "None"
     else:
         args.cpu_override = str(args.cpu_override)
+    if args.system not in args.machine_identifier:
+        MI_System_Mismatch = f"Indicated system ({args.system}) name not found in machine identifier ({args.machine_identifier}). This could result in improper #cpu_ranks_per_node and lead to over- or under-subscription of resources!"
+        warnings.warn(MI_System_Mismatch)
+    match args.system:
+        case "polaris":
+            args.cpu_ranks_per_node = 64
+        case "theta":
+            args.cpu_ranks_per_node = 256
+        case "theta-gpu":
+            args.cpu_ranks_per_node = 128
+        case _:
+            args.cpu_ranks_per_node = 1
     args.gpu_enabled = str(args.gpu_enabled)
     if args.libensemble_randomization:
         import secrets
@@ -107,6 +123,7 @@ def parse(prs=None, args=None):
         'ensemble_dir_path': [(args.libensemble_export, "s/^ENSEMBLE_DIR_PATH = .*/ENSEMBLE_DIR_PATH = {}/")],
         'machine_identifier': [(args.libensemble_export, "s/MACHINE_IDENTIFIER = .*/MACHINE_IDENTIFIER = {}/")],
         'cpu_override': [(args.libensemble_export, "s/cpu_override = .*/cpu_override = {}/")],
+        'cpu_ranks_per_node': [(args.libensemble_export, "s/cpu_ranks_per_node = .*/cpu_ranks_per_node = {}/")],
         'gpu_enabled': [(args.libensemble_export, "s/gpu_enabled = .*/gpu_enabled = {}/")],
         'seed_configspace': [(args.libensemble_export, "s/CONFIGSPACE_SEED = .*/CONFIGSPACE_SEED = {}/")],
         'seed_ytopt': [(args.libensemble_export, "s/YTOPT_SEED = .*/YTOPT_SEED = {}/")],
@@ -157,7 +174,7 @@ export IBV_FORK_SAFE=1; # May fix some MPI issues where processes call fork()
     env_adjust = "\n".join([known_environments[env] for env in args.configure_environment])
     job_contents = f"""#!/bin/bash -x
 #PBS -l walltime=01:00:00
-#PBS -l select={1+(args.mpi_ranks*args.ensemble_workers)}:system=polaris
+#PBS -l select={1+(args.mpi_ranks*args.ensemble_workers)}:system={args.system}
 #PBS -l filesystems=home:grand:eagle
 #PBS -A EE-ECP
 #PBS -q prod
@@ -218,9 +235,9 @@ echo;
             try:
                 os.rename(migration_from, migration_to)
             except:
-                print(f"{identifier} could not be migrated")
+                print(f"{identifier} could not be migrated -- {migration_from}")
             else:
-                print(f"{identifier} migrated to ensemble directory")
+                print(f"{identifier} migrated to ensemble directory -- {migration_to}")
         if proc.returncode == 0 and args.display_results:
             import pandas as pd
             print("Finished evaluations")

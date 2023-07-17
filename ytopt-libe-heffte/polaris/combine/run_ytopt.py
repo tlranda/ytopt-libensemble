@@ -3,8 +3,8 @@ Runs libEnsemble to call the ytopt ask/tell interface in a generator function,
 and the ytopt findRunTime interface in a simulator function.
 
 Execute locally via one of the following commands (e.g. 3 workers):
-   mpiexec -np 4 python run_ytopt_xsbench.py
-   python run_ytopt_xsbench.py --nworkers 3 --comms local
+   mpiexec -np 4 python run_ytopt.py
+   python run_ytopt.py --nworkers 3 --comms local
 
 The number of concurrent evaluations of the objective function will be 4-1=3.
 """
@@ -93,7 +93,11 @@ p8 = CSH.UniformFloatHyperparameter(name='p8', lower=0, upper=1)
 
 # Cross-architecture is out-of-scope for now so we determine this for the current platform and leave it at that
 cpu_override = None
-cpu_ranks_per_node = 64
+gpu_enabled = False
+cpu_ranks_per_node = 1
+
+c0 = CSH.Constant('c0', value='cufft' if gpu_enabled else 'fftw')
+
 if cpu_override is None:
     proc = subprocess.run(['nproc'], capture_output=True)
     if proc.returncode == 0:
@@ -108,8 +112,6 @@ if cpu_override is None:
 else:
     threads_per_node = cpu_override
     print(f"Override indicates {threads_per_node} CPU threads on this machine")
-
-gpu_enabled = True
 if gpu_enabled:
     proc = subprocess.run('nvidia-smi -L'.split(' '), capture_output=True)
     if proc.returncode != 0:
@@ -121,7 +123,6 @@ else:
     ranks_per_node = cpu_ranks_per_node
     print(f"CPU mode; force {ranks_per_node} ranks per node")
 print(f"Set ranks_per_node to {ranks_per_node}"+"\n")
-c0 = CSH.Constant('c0', value='cufft' if gpu_enabled else 'fftw')
 
 NODE_COUNT = max(MPI_RANKS // ranks_per_node,1)
 print(f"APP_SCALE (AKA Problem Size X, X, X) = {APP_SCALE} x3")
@@ -161,7 +162,7 @@ ytoptimizer = Optimizer(
     set_NI=10,
 )
 
-MACHINE_IDENTIFIER = "polaris-gpu"
+MACHINE_IDENTIFIER = "tbd"
 print(f"Identifying machine as {MACHINE_IDENTIFIER}"+"\n")
 MACHINE_INFO = {
     'identifier': MACHINE_IDENTIFIER,
@@ -239,7 +240,7 @@ libE_specs['use_worker_dirs'] = True
 libE_specs['sim_dirs_make'] = False  # Otherwise directories separated by each sim call
 # Copy or symlink needed files into unique directories
 libE_specs['sim_dir_symlink_files'] = [here + f for f in ['speed3d.sh', 'speed3d_no_gpu_aware.sh', 'gpu_cleanup.sh', 'plopper.py', 'set_affinity_gpu_polaris.sh']]
-ENSEMBLE_DIR_PATH = "PolarisTimeout_1024_b33d5cc0"
+ENSEMBLE_DIR_PATH = ""
 libE_specs['ensemble_dir_path'] = f'./ensemble_{ENSEMBLE_DIR_PATH}'
 #if you need to manually specify resource information, ie:
 #    libE_specs['resource_info'] = {'cores_on_node': (64,256), 'gpus_on_node': 0}
