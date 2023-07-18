@@ -44,7 +44,7 @@ def build():
     ensemble.add_argument("--launch-job", action='store_true',
                         help="Launch job once prepared (default: NOT launched, job script only written)")
     # GaussianCopula
-    gc = parser.add_argument_group("GaussianCopula", "Arguments for Gaussian Copula (must use --libensemble-target=run_gctal.py)")
+    gc = parser.add_argument_group("GaussianCopula", "Arguments for Gaussian Copula (must use --libensemble-target=run_gctla.py)")
     gc.add_argument("--gc-sys", type=int, default=None,
                     help="# MPI ranks targeted by constrained GC (default: Defers to --mpi-ranks)")
     gc.add_argument("--gc-app", type=int, default=None,
