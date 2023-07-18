@@ -51,6 +51,8 @@ def build():
                     help="# MPI ranks targeted by constrained GC (default: Defers to --mpi-ranks)")
     gc.add_argument("--gc-app", type=int, default=None,
                     help="Application size targeted by constrained GC (default: Defers to --application-scale)")
+    gc.add_argument("--gc-input", nargs="+", default=None,
+                    help="Inputs to provide to the GC (no default -- must be specified!)")
     # SEEDS
     seeds = parser.add_argument_group("Seeds", "Arguments that control randomization seeding")
     seeds.add_argument("--seed-configspace", type=int, default=1234,
@@ -153,6 +155,8 @@ def parse(prs=None, args=None):
         args.gc_sys = args.mpi_ranks
     if args.gc_app is None:
         args.gc_app = args.application_scale
+    if type(args.gc_input) is str:
+        args.gc_input = [args.gc_input]
     # Designated sed arguments
     args.designated_sed = {
         'mpi_ranks': [(args.libensemble_export, "s/MPI_RANKS = [0-9]*/MPI_RANKS = {}/"),],
@@ -167,8 +171,11 @@ def parse(prs=None, args=None):
         'seed_ytopt': [(args.libensemble_export, "s/YTOPT_SEED = .*/YTOPT_SEED = {}/")],
         'seed_numpy': [(args.libensemble_export, "s/NUMPY_SEED = .*/NUMPY_SEED = {}/")],
     }
-    if 'gc' in args.libensemble_export:
-        args.bonus_runtime_args = f"--constraint-sys {args.gc_sys} --constraint-app {args.gc_app}"
+    if 'gc' in args.libensemble_target:
+        try:
+            args.bonus_runtime_args = f"--constraint-sys {args.gc_sys} --constraint-app {args.gc_app} --input {' '.join(args.gc_input)}"
+        except TypeError: # args.gc_input is Nonetype, cannot be iterated
+            raise ValueError(f"Must supply --gc-input arguments to run Gaussian Copula")
     else:
         args.bonus_runtime_args = ""
     return args

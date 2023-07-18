@@ -130,6 +130,8 @@ class heffte_plopper(LibE_Plopper):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        # Bash these values with a hammer its ok
+        self.evaluation_tries = 1
 
     def gpu_cleanup(self, outfile, attempt, dictVal, *args, **kwargs):
         if not hasattr(self, 'gpus') or self.gpus < 1:
@@ -165,9 +167,9 @@ class heffte_plopper(LibE_Plopper):
             self.cmd_template = "aprun -n {mpi_ranks} -N {ranks_per_node} -cc depth -d {depth} -j {j} -e OMP_NUM_THREADS={depth} sh {interimfile}"
             theta_timeouts = {64: 20.0, 128: 40.0, 256: 60.0}
             self.known_timeouts.update(theta_timeouts)
-        self.node_scale = self.node_count * self.ppn
+        self.node_scale = self.nodes * self.ranks_per_node
         # Don't exceed #threads across total ranks
-        self.max_depth = self.max_cpus // self.ppn
+        self.max_depth = max(1, self.threads_per_node // self.ranks_per_node)
         sequence = [2**_ for _ in range(1,10) if (2**_) <= self.max_depth]
         if len(sequence) >= 2:
             intermediates = []
@@ -215,7 +217,7 @@ class heffte_plopper(LibE_Plopper):
                 selected_topology = f"{self.topology_keymap[topology_key]} {' '.join([str(_) for _ in selected_topology])}"
             config[topology_key] = selected_topology
         # Replace sequence value
-        config['P9'] = self.sequence[int(len(self.sequence) * config['P9'])]
+        config['P9'] = machine_info['sequence'][int(len(machine_info['sequence']) * float(config['P9']))]
         # Fix numpy zero-dimensional
         for k,v in config.items():
             if k not in self.topology_keymap.keys() and type(v) is np.ndarray and v.shape == ():
@@ -228,7 +230,8 @@ class heffte_plopper(LibE_Plopper):
             if type(v) is np.ndarray and v.shape == ():
                 v = v.tolist()
             dictVal[p] = v
-        dictVal.setdefault('machine_info', {'mpi_ranks': self.mpi_ranks})
+        # Machine info should be available via kwargs['extrakeys']['machine_info']
+        dictVal.setdefault('machine_info', kwargs['extrakeys']['machine_info'])
         dictVal = self.topology_interpret(dictVal)
         return dictVal
 

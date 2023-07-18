@@ -82,6 +82,18 @@ MPI_RANKS = 64
 CONFIGSPACE_SEED = 1234
 YTOPT_SEED = 2345
 
+# Set options so workers operate in unique directories
+here = os.getcwd() + '/'
+libE_specs['use_worker_dirs'] = True
+libE_specs['sim_dirs_make'] = False  # Otherwise directories separated by each sim call
+# Copy or symlink needed files into unique directories
+libE_specs['sim_dir_symlink_files'] = [here + f for f in ['speed3d.sh', 'speed3d_no_gpu_aware.sh', 'gpu_cleanup.sh', 'plopper.py', 'set_affinity_gpu_polaris.sh']]
+ENSEMBLE_DIR_PATH = ""
+libE_specs['ensemble_dir_path'] = f'./ensemble_{ENSEMBLE_DIR_PATH}'
+#if you need to manually specify resource information, ie:
+#    libE_specs['resource_info'] = {'cores_on_node': (64,256), 'gpus_on_node': 0}
+print(f"This ensemble operates as: {libE_specs['ensemble_dir_path']}"+"\n")
+
 # Load model
 cs = CS.ConfigurationSpace(seed=CONFIGSPACE_SEED)
 # arg1  precision
@@ -220,6 +232,16 @@ problem.plopper.set_architecture_info(threads_per_node = ranks_per_node,
                                       machine_identifier = MACHINE_IDENTIFIER,
                                       )
 problem.set_space(cs)
+from copy import deepcopy
+# We do this to ensure each problem can be referenced with a separate plopper that separately
+# points to its own tmp_file directory much like the ytopt version, but this doesn't require
+# me to re-initialize the object for every single iteration
+problems = dict()
+for simulatorID in range(2, 2+num_sim_workers):
+    dir_adjusted_problem = deepcopy(problem)
+    dir_adjusted_problem.plopper.outputdir = "tmp_files"
+    print(dir_adjusted_problem.plopper.outputdir)
+    problems[simulatorID] = dir_adjusted_problem
 
 # Declare the sim_f to be optimized, and the input/outputs
 sim_specs = {
@@ -236,7 +258,7 @@ sim_specs = {
             ('libE_workers', int, (1,)),],
     'user': {
         'machine_info': MACHINE_INFO,
-        'problem': problem,
+        'problem': problems,
     }
 }
 
@@ -286,18 +308,6 @@ exit_criteria = {'sim_max': int(user_args['max-evals'])}
 
 # Added as a workaround to issue that's been resolved on develop
 persis_info = add_unique_random_streams({}, nworkers + 1)
-
-# Set options so workers operate in unique directories
-here = os.getcwd() + '/'
-libE_specs['use_worker_dirs'] = True
-libE_specs['sim_dirs_make'] = False  # Otherwise directories separated by each sim call
-# Copy or symlink needed files into unique directories
-libE_specs['sim_dir_symlink_files'] = [here + f for f in ['speed3d.sh', 'speed3d_no_gpu_aware.sh', 'gpu_cleanup.sh', 'plopper.py', 'set_affinity_gpu_polaris.sh']]
-ENSEMBLE_DIR_PATH = ""
-libE_specs['ensemble_dir_path'] = f'./ensemble_{ENSEMBLE_DIR_PATH}'
-#if you need to manually specify resource information, ie:
-#    libE_specs['resource_info'] = {'cores_on_node': (64,256), 'gpus_on_node': 0}
-print(f"This ensemble operates as: {libE_specs['ensemble_dir_path']}"+"\n")
 
 def manager_save(H, gen_specs, libE_specs):
     import pandas as pd
