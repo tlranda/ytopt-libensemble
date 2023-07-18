@@ -98,7 +98,7 @@ p7 = CSH.UniformFloatHyperparameter(name='p7', lower=0, upper=1)
 # arg9
 p8 = CSH.UniformFloatHyperparameter(name='p8', lower=0, upper=1)
 # number of threads is hardware-dependent
-
+p9 = CSH.UniformFloatHyperparameter(name='p9', lower=0, upper=1)
 
 # Cross-architecture is out-of-scope for now so we determine this for the current platform and leave it at that
 cpu_override = None
@@ -121,6 +121,8 @@ if cpu_override is None:
 else:
     threads_per_node = cpu_override
     print(f"Override indicates {threads_per_node} CPU threads on this machine")
+if cpu_ranks_per_node is None:
+    cpu_ranks_per_node = threads_per_node
 if gpu_enabled:
     proc = subprocess.run('nvidia-smi -L'.split(' '), capture_output=True)
     if proc.returncode != 0:
@@ -156,7 +158,7 @@ if max_depth not in sequence:
 print(f"Depths are based on {threads_per_node} threads on each node, shared across {ranks_per_node} MPI ranks on each node")
 print(f"Selectable depths are: {sequence}"+"\n")
 # arg10 number threads per MPI process
-p9 = CSH.OrdinalHyperparameter(name='p9', sequence=sequence, default_value=max_depth)
+#p9 = CSH.OrdinalHyperparameter(name='p9', sequence=sequence, default_value=max_depth)
 
 cs.add_hyperparameters([p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, c0])
 
@@ -176,10 +178,12 @@ print(f"Identifying machine as {MACHINE_IDENTIFIER}"+"\n")
 MACHINE_INFO = {
     'identifier': MACHINE_IDENTIFIER,
     'mpi_ranks': MPI_RANKS,
+    'threads_per_node': threads_per_node,
     'ranks_per_node': ranks_per_node,
     'gpu_enabled': gpu_enabled,
     'libE_workers': num_sim_workers,
     'app_timeout': 300,
+    'sequence': sequence,
 }
 
 # Declare the sim_f to be optimized, and the input/outputs
@@ -190,6 +194,7 @@ sim_specs = {
             ('elapsed_sec', float, (1,)),
             ('machine_identifier','<U30', (1,)),
             ('mpi_ranks', int, (1,)),
+            ('threads_per_node', int, (1,)),
             ('ranks_per_node', int, (1,)),
             ('gpu_enabled', bool, (1,)),
             ('libE_id', int, (1,)),
@@ -214,13 +219,14 @@ gen_specs = {
             ('p6', "<U24", (1,)),
             ('p7', float, (1,)),
             ('p8', float, (1,)),
-            ('p9', int, (1,)),
+            ('p9', float, (1,)),
             ],
     'persis_in': sim_specs['in'] +\
                  ['FLOPS'] +\
                  ['elapsed_sec'] +\
                  ['machine_identifier'] +\
                  ['mpi_ranks'] +\
+                 ['threads_per_node'] +\
                  ['ranks_per_node'] +\
                  ['gpu_enabled'] +\
                  ['libE_id'] +\

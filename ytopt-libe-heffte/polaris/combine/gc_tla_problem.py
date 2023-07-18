@@ -60,12 +60,11 @@ input_space = [('Categorical',
                  'default_value': 1,
                 }
                ),
-               ('UniformInt',
+               ('UniformFloat',
                 {'name': 'p9',
-                 'lower': 2,
-                 'upper': 8,
-                 'q': 2,
-                 'default_value': 8,
+                 'lower': 0,
+                 'upper': 1,
+                 'default_value': 1,
                 }
                ),
                ('Constant',
@@ -114,7 +113,8 @@ def customize_space(self, class_size):
     # Ensure max_depth is always in the list
     if np.log2(self.max_depth)-int(np.log2(self.max_depth)) > 0:
         sequence = sorted(sequence+[self.max_depth])
-    altered_space[9] = ('Ordinal', {'name': 'p9', 'sequence': sequence, 'default_value': self.max_depth})
+    #altered_space[9] = ('Ordinal', {'name': 'p9', 'sequence': sequence, 'default_value': self.max_depth})
+    self.sequence = sequence
     self.input_space = altered_space
 
 APP_SCALES = [64,128,256,512,1024,2048]
@@ -131,6 +131,27 @@ class heffte_plopper(LibE_Plopper):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
+    def gpu_cleanup(self, outfile, attempt, dictVal, *args, **kwargs):
+        if not hasattr(self, 'gpus') or self.gpus < 1:
+            return
+        # Re-identify run string
+        runstr = self.runString(outfile, attempt, dictVal, *args, **kwargs)
+        if '--hostfile' not in runstr:
+            return
+        cmdList = runstr.split()
+        nodefile = cmdList[cmdList.index('--hostfile')+1]
+        with open(nodefile, 'r') as f:
+            n_nodes = len(f.readlines())
+        if "aprun" in runstr:
+            cleanup_cmd = f"aprun -n {n_nodes} -N 1 --hostfile {nodefile} ./gpu_cleanup.sh speed3d_r2c"
+        elif "mpiexec" in runstr:
+            cleanup_cmd = f"mpiexec -n {n_nodes} --ppn 1 --hostfile {nodefile} ./gpu_cleanup.sh speed3d_r2c"
+        else:
+            raise ValueError("Not aprun or mpiexec -- no GPU cleanup known")
+        status = subprocess.run(cleanup-cmd, shell=True)
+        if status.returncode != 0:
+            raise ValueError(f"Cleanup Command failed to run (Return code: {status.returncode})")
+
     def set_architecture_info(self, **kwargs):
         super().set_architecture_info(**kwargs)
         # Machine identifier changes proper invocation to utilize allocated resources
@@ -144,6 +165,23 @@ class heffte_plopper(LibE_Plopper):
             self.cmd_template = "aprun -n {mpi_ranks} -N {ranks_per_node} -cc depth -d {depth} -j {j} -e OMP_NUM_THREADS={depth} sh {interimfile}"
             theta_timeouts = {64: 20.0, 128: 40.0, 256: 60.0}
             self.known_timeouts.update(theta_timeouts)
+        self.node_scale = self.node_count * self.ppn
+        # Don't exceed #threads across total ranks
+        self.max_depth = self.max_cpus // self.ppn
+        sequence = [2**_ for _ in range(1,10) if (2**_) <= self.max_depth]
+        if len(sequence) >= 2:
+            intermediates = []
+            prevpow = sequence[1]
+            for rawpow in sequence[2:]:
+                if rawpow+prevpow >= self.max_depth:
+                    break
+                intermediates.append(rawpow+prevpow)
+                prevpow = rawpow
+            sequence = sorted(intermediates + sequence)
+        # Ensure max_depth is always in the list
+        if np.log2(self.max_depth)-int(np.log2(self.max_depth)) > 0:
+            sequence = sorted(sequence+[self.max_depth])
+        self.sequence = sequence
 
     def make_topology(self, budget: int) -> list[tuple[int,int,int]]:
         # Powers of 2 that can be represented in topology X/Y/Z
@@ -176,6 +214,8 @@ class heffte_plopper(LibE_Plopper):
             if type(selected_topology) is not str:
                 selected_topology = f"{self.topology_keymap[topology_key]} {' '.join([str(_) for _ in selected_topology])}"
             config[topology_key] = selected_topology
+        # Replace sequence value
+        config['P9'] = self.sequence[int(len(self.sequence) * config['P9'])]
         # Fix numpy zero-dimensional
         for k,v in config.items():
             if k not in self.topology_keymap.keys() and type(v) is np.ndarray and v.shape == ():

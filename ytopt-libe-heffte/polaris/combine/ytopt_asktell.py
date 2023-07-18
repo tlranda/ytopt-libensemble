@@ -38,10 +38,13 @@ def persistent_ytopt(H, persis_info, gen_specs, libE_info):
                     field_params[field] = entry[field][0]
                 results += [(field_params, entry['FLOPS'][0])]
             #print('results: ', results)
+            print(f"[libE - generator {libE_info['workerID']}] tells optimizer about points: {results}")
             ytoptimizer.tell(results)
 
             ytopt_points = ytoptimizer.ask(n_points=batch_size)  # Returns a generator that we convert to a list
             ytopt_points = list(ytopt_points)[0]
+
+        print(f"[libE - generator {libE_info['workerID']}] creates points: {ytopt_points}")
 
         # The hand-off of information from ytopt to libE is below. This hand-off may be brittle.
         H_o = np.zeros(batch_size, dtype=gen_specs['out'])

@@ -23,6 +23,8 @@ def build():
                         help="System sets default # CPU ranks per node (default: %(default)s)")
     scaling.add_argument("--cpu-override", type=int, default=None,
                         help="Override automatic CPU detection to set max_cpu value (default: Detect)")
+    scaling.add_argument("--cpu-ranks-per-node", type=int, default=None,
+                        help="Override #ranks per node on CPUs (default: #threads on cpu or --cpu-override when specified)")
     scaling.add_argument("--gpu-enabled", action="store_true",
                         help="Enable GPU treatment for libensemble (default: Disabled)")
     # ENSEMBLE
@@ -103,20 +105,22 @@ def parse(prs=None, args=None):
         args.cpu_override = "None"
     else:
         args.cpu_override = str(args.cpu_override)
+    if args.cpu_ranks_per_node is None:
+        match args.system:
+            case "polaris":
+                args.cpu_ranks_per_node = 64
+            case "theta":
+                args.cpu_ranks_per_node = 256
+            case "theta-gpu":
+                args.cpu_ranks_per_node = 128
+            case _:
+                args.cpu_ranks_per_node = 1
+    args.cpu_ranks_per_node = str(args.cpu_ranks_per_node)
     if args.system not in args.machine_identifier:
         MI_System_Mismatch = f"Indicated system ({args.system}) name not found in machine identifier ({args.machine_identifier}). This could result in improper #cpu_ranks_per_node and lead to over- or under-subscription of resources!"
         warnings.warn(MI_System_Mismatch)
         if not args.error_demotion:
             raise ValueError(WarningsAsErrors)
-    match args.system:
-        case "polaris":
-            args.cpu_ranks_per_node = 64
-        case "theta":
-            args.cpu_ranks_per_node = 256
-        case "theta-gpu":
-            args.cpu_ranks_per_node = 128
-        case _:
-            args.cpu_ranks_per_node = 1
     args.gpu_enabled = str(args.gpu_enabled)
     if args.libensemble_randomization:
         import secrets

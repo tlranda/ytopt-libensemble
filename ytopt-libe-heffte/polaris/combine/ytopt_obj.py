@@ -19,7 +19,9 @@ def init_obj(H, persis_info, sim_specs, libE_info):
     machine_info = sim_specs['user']['machine_info']
     point['machine_info'] = machine_info
 
+    print(f"[libE simulator - {libE_info['workerID']}] submits point: {point}")
     y = myobj(point, sim_specs['in'], libE_info['workerID']) # ytopt objective wants a dict
+    print(f"[libE simulator - {libE_info['workerID']}] receives objective for point: {point}")
     H_o = np.zeros(len(sim_specs['out']), dtype=sim_specs['out'])
     H_o['FLOPS'] = y
     H_o['elapsed_sec'] = time.time() - start_time
@@ -27,6 +29,7 @@ def init_obj(H, persis_info, sim_specs, libE_info):
     # Passed back for processing in CSV records
     H_o['machine_identifier'] = [machine_info['identifier']]
     H_o['mpi_ranks'] = [machine_info['mpi_ranks']]
+    H_o['threads_per_node'] = [machine_info['threads_per_node']]
     H_o['ranks_per_node'] = [machine_info['ranks_per_node']]
     H_o['gpu_enabled'] = [machine_info['gpu_enabled']]
     H_o['libE_id'] = [libE_info['workerID']]
@@ -64,6 +67,8 @@ def topology_interpret(config: dict) -> dict:
         if type(selected_topology) is not str:
             selected_topology = f"{topology_keymap[topology_key]} {' '.join([str(_) for _ in selected_topology])}"
         config[topology_key] = selected_topology
+    # Replace sequence value
+    config['p9'] = machine_info['sequence'][int(len(machine_info['sequence']) * config['p9'])]
     # Fix numpy zero-dimensional arrays
     for k,v in config.items():
         if k not in topology_keymap.keys() and type(v) is np.ndarray and v.shape == ():
