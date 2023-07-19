@@ -73,17 +73,21 @@ assert all([opt in user_args for opt in req_settings]), \
 
 # Type-fixing for args
 # Tuple is arg_name, required, cast_type
+
+# Bools can't be cast directly from strings because the truthiness of a string is always true
+def boolcast(in_str):
+    return (type(in_str) is str and in_str in ['True', 'true', 't', 'on', '1', 'y', 'yes']) or (type(in_str) is not str and bool(in_str))
 arg_casts = [('max-evals', True, int),
              ('constraint-sys', True, int),
              ('constraint-app', True, int),
-             ('auto-budget', False, bool),
+             ('auto-budget', False, boolcast),
              ('initial-quantile', False, float),
              ('min-quantile', False, float),
              ('budget-confidence', False, float),
              ('quantile-reduction', False, float),
              ('ideal-proportion', False, float),
              ('ideal-attrition', False, float),
-             ('determine-budget-only', False, bool),]
+             ('determine-budget-only', False, boolcast),]
 for (arg_name, required, cast_type) in arg_casts:
     if required or arg_name in user_args:
         user_args[arg_name] = cast_type(user_args[arg_name])
@@ -242,7 +246,7 @@ topology_cache = problem.plopper.topology_cache
 floatcast_fn = problem.plopper.floatcast
 uncasted_space_size = problem.input_space_size
 # Arguments to control autobudgeting
-ideal_proportion = user_args['ideal-proportion'] if 'ideal-proportion' in user_args else 0.05
+ideal_proportion = user_args['ideal-proportion'] if 'ideal-proportion' in user_args else 0.1
 assert 0 < ideal_proportion <= 1, "Ideal proportion must be > 0 and <= 1"
 ideal_attrition = user_args['ideal-attrition'] if 'ideal-attrition' in user_args else 0.05
 assert 0 <= ideal_attrition < 1, "Ideal attrition must be >= 0 and < 1"
@@ -298,6 +302,7 @@ while True:
     # Ideal Population and expected surviving ideal proportion after sampling
     ideal = int(pop * ideal_proportion)
     subideal = max(1, ideal - int((pop - subpop) * ideal_attrition))
+    print(f"Population {pop} | Sampleable {subpop} | Ideal {ideal} | Ideal with Attrition {subideal}")
     if subideal > subpop:
         print(f"Autotuning budget indeterminate at quantile {data_quantile}")
         suggested_budget = user_args['max-evals']
