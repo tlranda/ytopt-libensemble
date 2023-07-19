@@ -17,6 +17,8 @@ np.random.seed(NUMPY_SEED)
 import pandas as pd
 import itertools
 import subprocess
+from copy import deepcopy
+import warnings
 
 import multiprocessing
 multiprocessing.set_start_method('fork', force=True)
@@ -45,7 +47,6 @@ num_sim_workers = nworkers - 1  # Subtracting one because one worker will be the
 
 # Refer to run_ytopt version if user args are needed for run_gctla
 user_args = {}
-#user_args.update({'max-evals': 10})
 
 # Memo-ize whenever an argument can start and capstone end with length of the list
 start_arg_idxs = [_ for _, e in enumerate(user_args_in) if e.startswith('--')]+[len(user_args_in)]
@@ -71,9 +72,21 @@ assert all([opt in user_args for opt in req_settings]), \
         f"Specify each setting in {req_settings}"
 
 # Type-fixing for args
-int_args = ['max-evals', 'constraint-sys', 'constraint-app']
-for arg in int_args:
-    user_args[arg] = int(user_args[arg])
+# Tuple is arg_name, required, cast_type
+arg_casts = [('max-evals', True, int),
+             ('constraint-sys', True, int),
+             ('constraint-app', True, int),
+             ('auto-budget', False, bool),
+             ('initial-quantile', False, float),
+             ('min-quantile', False, float),
+             ('budget-confidence', False, float),
+             ('quantile-reduction', False, float),
+             ('ideal-proportion', False, float),
+             ('ideal-attrition', False, float),
+             ('determine-budget-only', False, bool),]
+for (arg_name, required, cast_type) in arg_casts:
+    if required or arg_name in user_args:
+        user_args[arg_name] = cast_type(user_args[arg_name])
 
 # Variables that will be sed-edited to control scaling
 APP_SCALE = 1024
@@ -193,15 +206,10 @@ MACHINE_INFO = {
     'sequence': sequence,
 }
 
-# Load data
-data = pd.concat([pd.read_csv(_) for _ in user_args['input']])
-data_trimmed = data[['c0',]+[f'p{_}' for _ in range(10)]+['mpi_ranks']]
-# Create model
+# For efficiency's sake, the condition makes batches of 100 samples at a time
 conditions = [Condition({'mpi_ranks': user_args['constraint-sys'],
                          'p1': user_args['constraint-app']},
-                        num_rows=100)] #max(100, user_args['max-evals']))]
-metadata = SingleTableMetadata()
-metadata.detect_from_dataframe(data_trimmed)
+                        num_rows=100)]
 constraints = [{'constraint_class': 'ScalarRange', # App scale limit
                     'constraint_parameters': {
                         'column_name': 'p1',
@@ -217,10 +225,6 @@ constraints = [{'constraint_class': 'ScalarRange', # App scale limit
                         'strict_boundaries': False,},
                     },
               ]
-model = GaussianCopula(metadata, enforce_min_max_values=False)
-model.add_constraints(constraints=constraints)
-model.fit(data_trimmed)
-
 # Fetch problem instance and set its space based on alterations
 import gc_tla_problem
 app_scale_name = gc_tla_problem.lookup_ival[(NODE_COUNT, APP_SCALE)]
@@ -232,7 +236,108 @@ problem.plopper.set_architecture_info(threads_per_node = ranks_per_node,
                                       machine_identifier = MACHINE_IDENTIFIER,
                                       )
 problem.set_space(cs)
-from copy import deepcopy
+
+# Fetch the floatcasting function for GC fitting
+topology_cache = problem.plopper.topology_cache
+floatcast_fn = problem.plopper.floatcast
+uncasted_space_size = problem.input_space_size
+# Arguments to control autobudgeting
+ideal_proportion = user_args['ideal-proportion'] if 'ideal-proportion' in user_args else 0.05
+assert 0 < ideal_proportion <= 1, "Ideal proportion must be > 0 and <= 1"
+ideal_attrition = user_args['ideal-attrition'] if 'ideal-attrition' in user_args else 0.05
+assert 0 <= ideal_attrition < 1, "Ideal attrition must be >= 0 and < 1"
+budget_confidence = user_args['budget-confidence'] if 'budget-confidence' in user_args else 0.95
+assert 0 <= budget_confidence < 1, "Budget confidence must be >= 0 and < 1"
+quantile_reduction = user_args['quantile-reduction'] if 'quantile-reduction' in user_args else 0.1
+assert 0 < quantile_reduction <= 1, "Quantile reduction must be > 0 and <= 1"
+min_quantile = user_args['min-quantile'] if 'min-quantile' in user_args else 0.15
+assert min_quantile >= 0, "Minimum quantile must be >= 0"
+# Determine qualified space size
+possible_configurations = uncasted_space_size * len(sequence) * (len(topology_cache[user_args['constraint-sys']]) ** 2)
+# Ensure budgeting saturation
+mass_condition = deepcopy(conditions)
+mass_condition[0].num_rows = possible_configurations
+# Load data
+data = pd.concat([pd.read_csv(_) for _ in user_args['input']])
+data_trimmed = data[['c0',]+[f'p{_}' for _ in range(10)]+['mpi_ranks', 'FLOPS']]
+metadata = SingleTableMetadata()
+metadata.detect_from_dataframe(data_trimmed.drop(columns=['FLOPS']))
+data_quantile = user_args['initial-quantile'] if 'initial-quantile' in user_args else 1.0
+accepted_model = None
+# Mathematics to control auto-budgeting
+try:
+    from math import comb
+except ImportError:
+    from math import factorial
+    def comb(n,k):
+        return factorial(n) / (factorial(k) * factorial(n-k))
+def hypergeo(i,p,t,k):
+    return (comb(i,t)*comb((p-i),(k-t))) / comb(p,k)
+
+while True:
+    # Get subset for data quantile
+    fittable = data_trimmed[data_trimmed['FLOPS'] < data_trimmed['FLOPS'].quantile(data_quantile)]
+    fittable = fittable.drop(columns=["FLOPS"])
+    warnings.simplefilter('ignore')
+    model = GaussianCopula(metadata, enforce_min_max_values=False)
+    model.add_constraints(constraints=constraints)
+    model.fit(fittable)
+    warnings.simplefilter('default')
+
+    # Change max-evals if auto-budgeted
+    if 'auto-budget' not in user_args or not user_args['auto-budget']:
+        accepted_model = model
+        suggested_budget = user_args['max-evals']
+        break
+    mass_sample = model.sample_from_conditions(mass_condition)
+    # Downcast floats to interpolated values
+    space_sample = floatcast_fn(mass_sample, MACHINE_INFO)
+    # Original Population and available population for sampling
+    pop = possible_configurations
+    subpop = len(space_sample.drop_duplicates())
+    # Ideal Population and expected surviving ideal proportion after sampling
+    ideal = int(pop * ideal_proportion)
+    subideal = max(1, ideal - int((pop - subpop) * ideal_attrition))
+    if subideal > subpop:
+        print(f"Autotuning budget indeterminate at quantile {data_quantile}")
+        suggested_budget = user_args['max-evals']
+    else:
+        suggested_budget = 0
+        while suggested_budget < subideal:
+            suggested_budget += 1
+            confidence = sum([hypergeo(subideal,subpop,_,suggested_budget) for _ in range(1,suggested_budget+1)])
+            if confidence >= budget_confidence:
+                break
+        if confidence >= budget_confidence:
+            print(f"Autotuning budget {suggested_budget} determined at quantile {data_quantile}")
+            accepted_model = model
+            # Accepted model can be cached
+            if suggested_budget < user_args['max-evals']:
+                break
+            else:
+                print(f"Continue pruning to undercut max-evals {user_args['max-evals']}")
+        else:
+            print(f"Autotuning budget at quantile {data_quantile} failed to satisfy confidence {budget_confidence}; max confidence: {confidence}")
+    data_quantile -= quantile_reduction
+    if data_quantile <= min_quantile:
+        suggested_budget = user_args['max-evals']
+        break
+del comb, hypergeo, pop, subpop, ideal, subideal
+# Set max-evals if it reduces the budget
+if suggested_budget < user_args['max-evals']:
+    print(f"Auto-budgeting reduces max-evals: {user_args['max-evals']} --> budget: {suggested_budget}")
+elif suggested_budget == user_args['max-evals']:
+    print(f"Using max-evals: {user_args['max-evals']}")
+else:
+    print(f"Auto-budgeting would exceed max-evals: {user_args['max-evals']} <-- budget: {suggested_budget}")
+    print("!!Max-evals NOT adjusted to suggested budget!!")
+user_args['max-evals'] = min(suggested_budget, user_args['max-evals'])
+if accepted_model is not None:
+    model = accepted_model
+
+if 'determine-budget-only' in user_args and user_args['determine-budget-only']:
+    exit()
+
 # We do this to ensure each problem can be referenced with a separate plopper that separately
 # points to its own tmp_file directory much like the ytopt version, but this doesn't require
 # me to re-initialize the object for every single iteration

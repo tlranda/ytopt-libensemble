@@ -53,6 +53,22 @@ def build():
                     help="Application size targeted by constrained GC (default: Defers to --application-scale)")
     gc.add_argument("--gc-input", nargs="+", default=None,
                     help="Inputs to provide to the GC (no default -- must be specified!)")
+    gc.add_argument("--gc-auto-budget", action='store_true',
+                    help="Utilize auto-budgeting in libensemble-target (default: not used)")
+    gc.add_argument("--gc-determine-budget-only", action='store_true',
+                    help="Exit immediately after auto-budgeting in libensemble-target (default: continue with autotuning)")
+    gc.add_argument("--gc-initial-quantile", type=float, default=None,
+                    help="Initial quantile to start auto-budgeting from (default: libensemble-target's default)")
+    gc.add_argument("--gc-min-quantile", type=float, default=None,
+                    help="Minimum quantile to use in auto-budgeting (default: libensemble-target's default)")
+    gc.add_argument("--gc-budget-confidence", type=float, default=None,
+                    help="Required confidence to accept a budget in auto-budgeting (default: libensemble-target's default")
+    gc.add_argument("--gc-quantile-reduction", type=float, default=None,
+                    help="Amount to reduce target quantile by each auto-budgeting iteration (default: libensemble-target's default)")
+    gc.add_argument("--gc-ideal-proportion", type=float, default=None,
+                    help="Ideal proportion of search space to target in auto-budgeting (default: libensemble-target's default)")
+    gc.add_argument("--gc-ideal-attrition", type=float, default=None,
+                    help="Attrition rate from ideal portion after the GC constrains the space (default: libensemble-target's default")
     # SEEDS
     seeds = parser.add_argument_group("Seeds", "Arguments that control randomization seeding")
     seeds.add_argument("--seed-configspace", type=int, default=1234,
@@ -173,7 +189,18 @@ def parse(prs=None, args=None):
     }
     if 'gc' in args.libensemble_target:
         try:
-            args.bonus_runtime_args = f"--constraint-sys {args.gc_sys} --constraint-app {args.gc_app} --input {' '.join(args.gc_input)}"
+            args.bonus_runtime_args = f"--constraint-sys {args.gc_sys} --constraint-app {args.gc_app} --input {' '.join(args.gc_input)} --auto-budget={args.gc_auto_budget}"
+            if args.gc_auto_budget:
+                autobudget_args = ['gc_initial_quantile', 'gc_min_quantile', 'gc_budget_confidence',
+                                   'gc_quantile_reduction', 'gc_ideal_proportion', 'gc_ideal_attrition',
+                                   'gc_determine_budget_only',]
+                target_autobudget = ['--initial-quantile', '--min-quantile', '--budget-confidence',
+                                     '--quantile-reduction', '--ideal-proportion', '--ideal-attrition',
+                                     '--determine-budget-only',]
+                for argname, bonusargname in zip(autobudget_args, target_autobudget):
+                    local_arg = getattr(args, argname)
+                    if local_arg is not None:
+                        args.bonus_runtime_args += f" {bonusargname} {local_arg}"
         except TypeError: # args.gc_input is Nonetype, cannot be iterated
             raise ValueError(f"Must supply --gc-input arguments to run Gaussian Copula")
     else:

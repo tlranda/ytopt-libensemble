@@ -2,6 +2,7 @@ from GC_TLA.base_problem import libe_problem_builder
 from GC_TLA.base_plopper import LibE_Plopper
 import os, subprocess, numpy as np
 import itertools, math
+from collections import UserDict
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 input_space = [('Categorical',
@@ -122,16 +123,47 @@ APP_SCALE_NAMES = ['N','S','M','L','XL','H']
 NODE_SCALES = [1,2,4,8,16,64]
 lookup_ival = dict(((k1,k2),f"{v2}_{k1}") for (k2,v2) in zip(APP_SCALES, APP_SCALE_NAMES) for k1 in NODE_SCALES)
 
+class TopologyCache(UserDict):
+    # We utilize this dictionary as a hashmap++, so KeyErrors don't matter
+    # If the key doesn't exist, we'll create it and its value, then want to store it
+    # to operate as a cache for known keys. As such, this subclass permits the behavior with
+    # light subclassing of the UserDict object
+
+    candidate_orders = [_ for _ in itertools.product([0,1,2], repeat=3) if len(_) == len(set(_))]
+
+    def __getitem__(self, key):
+        if key not in self.data:
+            self.data[key] = self.make_topology(key)
+        return super().__getitem__(key)
+
+    def make_topology(self, budget: int) -> list[tuple[int,int,int]]:
+        # Powers of 2 that can be represented in topology X/Y/Z
+        factors = [2 ** x for x in range(int(np.log2(budget)),-1,-1)]
+        topology = []
+        for candidate in itertools.product(factors, repeat=3):
+            # All topologies need to have product that == budget
+            # Reordering the topology is not considered a relevant difference, so reorderings are discarded
+            if np.prod(candidate) != budget or \
+               np.any([tuple([candidate[_] for _ in order]) in topology for order in self.candidate_orders]):
+                continue
+            topology.append(candidate)
+        # Add the null space
+        topology += [' ']
+        return topology
+
+    def __repr__(self):
+        return "TopologyCache:"+super().__repr__()
+
+
 # Introduce the post-sampling space alteration for scale
 class heffte_plopper(LibE_Plopper):
-    candidate_orders = [_ for _ in itertools.product([0,1,2], repeat=3) if len(_) == len(set(_))]
-    topology_keymap = {'P7': '-ingrid', 'P8': '-outgrid'}
-    topology_cache = {}
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # Bash these values with a hammer its ok
         self.evaluation_tries = 1
+        self.topology_keymap = {'P7': '-ingrid', 'P8': '-outgrid'}
+        self.topology_cache = TopologyCache()
 
     def gpu_cleanup(self, outfile, attempt, dictVal, *args, **kwargs):
         if not hasattr(self, 'gpus') or self.gpus < 1:
@@ -185,29 +217,12 @@ class heffte_plopper(LibE_Plopper):
             sequence = sorted(sequence+[self.max_depth])
         self.sequence = sequence
 
-    def make_topology(self, budget: int) -> list[tuple[int,int,int]]:
-        # Powers of 2 that can be represented in topology X/Y/Z
-        factors = [2 ** x for x in range(int(np.log2(budget)),-1,-1)]
-        topology = []
-        for candidate in itertools.product(factors, repeat=3):
-            # All topologies need to have product that == budget
-            # Reordering the topology is not considered a relevant difference, so reorderings are discarded
-            if np.prod(candidate) != budget or \
-               np.any([tuple([candidate[_] for _ in order]) in topology for order in self.candidate_orders]):
-                continue
-            topology.append(candidate)
-        # Add the null space
-        topology += [' ']
-        return topology
-
     def topology_interpret(self, config: dict) -> dict:
         machine_info = config['machine_info']
         if config['P1'] in self.known_timeouts.keys():
             config['machine_info']['app_timeout'] = self.known_timeouts[config['P1']]
-            machine_info['app_timeout'] = known_timeouts[config['P1']]
+            machine_info['app_timeout'] = self.known_timeouts[config['P1']]
         budget = machine_info['mpi_ranks']
-        if budget not in self.topology_cache.keys():
-            self.topology_cache[budget] = self.make_topology(budget)
         topology = self.topology_cache[budget]
         # Replace each key with uniform bucketized value
         for topology_key in self.topology_keymap.keys():
@@ -223,6 +238,48 @@ class heffte_plopper(LibE_Plopper):
             if k not in self.topology_keymap.keys() and type(v) is np.ndarray and v.shape == ():
                 config[k] = v.tolist()
         return config
+
+    def floatcast(self, DataFrame, machine_info):
+        # Return a copy, leave original frame alone
+        copied = DataFrame.copy()
+
+        altered_topologies = np.empty((len(DataFrame), len(self.topology_keymap.keys())), dtype=int)
+        altered_sequence = np.empty((len(DataFrame), 1), dtype=int)
+
+        sequence = np.asarray(machine_info['sequence'])
+
+        # Figure out whether P9 is upper/lower case
+        p9_key = 'p9' if 'p9' in DataFrame.columns else 'P9'
+        assert p9_key in DataFrame.columns
+        # Topology keymap is always in upper case, so may have to temp-cast it
+        if p9_key.lower() == p9_key:
+            topkeys = [k.lower() for k in self.topology_keymap.keys()]
+        else:
+            topkeys = list(self.topology_keymap.keys())
+
+        # Groupby budgets for more efficient processing
+        for (gidx, group) in DataFrame.groupby('mpi_ranks'):
+            budget = group.loc[group.index[0], 'mpi_ranks']
+            # Topology
+            topology = self.topology_cache[budget]
+            # Topology must be differentiably cast, but doesn't need to be representative per se
+            topology = np.arange(len(topology))
+            for tidx, topology_key in enumerate(topkeys):
+                # Initial selection followed by boundary fixing, then substitute from array
+                # Gaussian Copula CAN over/undersample, so you have to fix that too
+                selection = (group[topology_key] * len(topology)).astype(int)
+                selection = selection.apply(lambda s: max(min(s, len(topology)-1), 0))
+                selection = topology[selection]
+                altered_topologies[group.index, tidx] = selection
+            # Sequence
+            selection = (group[p9_key] * len(sequence)).astype(int)
+            selection = selection.apply(lambda s: max(min(s, len(sequence)-1), 0))
+            altered_sequence[group.index] = sequence[selection].reshape(len(selection),1)
+        # Substitute values and return
+        for key, replacement in zip(topkeys+[p9_key],
+                                    np.hsplit(altered_topologies, altered_topologies.shape[1])+[altered_sequence]):
+            copied[key] = replacement
+        return copied
 
     def createDict(self, x, params, *args, **kwargs):
         dictVal = {}
