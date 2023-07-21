@@ -88,7 +88,7 @@ def parse(prs=None, args=None):
     #           Substitutions defined as tuple of filename and the template string itself
     args.seds = {
         ('ens_dir_path',): [(args.ens_template_export, "s/^ENSEMBLE_DIR_PATH = .*/ENSEMBLE_DIR_PATH = {}/"),],
-        ('machine_identifier',): [(args.ens_template_export, "s/MACHINE_IDENTIFIER = .*/MACHINE_IDENTIIFER = {}/"),],
+        ('machine_identifier',): [(args.ens_template_export, "s/MACHINE_IDENTIFIER = .*/MACHINE_IDENTIFIER = {}/"),],
         ('seed_configspace',): [(args.ens_template_export, "s/CONFIGSPACE_SEED = .*/CONFIGSPACE_SEED = {}/"),],
         ('seed_ytopt',): [(args.ens_template_export, "s/YTOPT_SEED = .*/YTOPT_SEED = {}/"),],
         ('seed_numpy',): [(args.ens_template_export, "s/NUMPY_SEED = .*/NUMPY_SEED = {}/"),],

@@ -193,7 +193,7 @@ exit_criteria = {'sim_max': int(user_args['max-evals'])}
 persis_info = add_unique_random_streams({}, nworkers+1)
 
 here = os.getcwd() + '/'
-libE_specs['user_worker_dirs'] = True
+libE_specs['use_worker_dirs'] = True
 libE_specs['sim_dirs_make'] = False
 libE_specs['sim_dir_symlink_files'] = [here+f for f in []]
 ENSEMBLE_DIR_PATH = ""
