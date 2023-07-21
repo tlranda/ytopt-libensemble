@@ -17,6 +17,7 @@ def build(prs=None):
     prs.add_argument("--flops-only", action="store_true", help="Drop runtime from the plots")
     prs.add_argument("--stats", action="store_true", help="Calculate extended stats (text only)")
     prs.add_argument("--no-plots", action="store_true", help="Skip visuals")
+    prs.add_argument("--save", default=None, help="Save figure rather than display (to this path, if given)")
     return prs
 
 def parse(prs=None, args=None):
@@ -141,7 +142,12 @@ def visualizations(frames, args):
     #print(names)
     ax.hlines(0.0, xmin=0, xmax=max_frame_index, color='black', zorder=-1)
     plt.legend(leglines, names, loc='best')
-    plt.show()
+    if args.save is None:
+        print("Showing plots")
+        plt.show()
+    else:
+        print(f"Saving plot to {args.save}")
+        plt.savefig(args.save)
 
 
 if __name__ == '__main__':

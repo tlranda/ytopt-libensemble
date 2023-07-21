@@ -264,6 +264,8 @@ mass_condition[0].num_rows = possible_configurations
 # Load data
 data = pd.concat([pd.read_csv(_) for _ in user_args['input']])
 data_trimmed = data[['c0',]+[f'p{_}' for _ in range(10)]+['mpi_ranks', 'FLOPS']]
+# Drop configurations that had errors (not runtime failures); indicated by FLOPS >= 2.0
+data_trimmed = data_trimmed[data_trimmed['FLOPS'] < 2.0]
 metadata = SingleTableMetadata()
 metadata.detect_from_dataframe(data_trimmed.drop(columns=['FLOPS']))
 data_quantile = user_args['initial-quantile'] if 'initial-quantile' in user_args else 1.0
@@ -280,7 +282,7 @@ def hypergeo(i,p,t,k):
 
 while True:
     # Get subset for data quantile
-    fittable = data_trimmed[data_trimmed['FLOPS'] < data_trimmed['FLOPS'].quantile(data_quantile)]
+    fittable = data_trimmed[data_trimmed['FLOPS'] <= data_trimmed['FLOPS'].quantile(data_quantile)]
     fittable = fittable.drop(columns=["FLOPS"])
     warnings.simplefilter('ignore')
     model = GaussianCopula(metadata, enforce_min_max_values=False)
@@ -314,7 +316,7 @@ while True:
             if confidence >= budget_confidence:
                 break
         if confidence >= budget_confidence:
-            print(f"Autotuning budget {suggested_budget} determined at quantile {data_quantile}")
+            print(f"Autotuning budget {suggested_budget} determined at quantile {data_quantile} (confidence: {confidence})")
             accepted_model = model
             # Accepted model can be cached
             if suggested_budget < user_args['max-evals']:

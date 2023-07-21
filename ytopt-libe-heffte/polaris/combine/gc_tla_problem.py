@@ -118,9 +118,9 @@ def customize_space(self, class_size):
     self.sequence = sequence
     self.input_space = altered_space
 
-APP_SCALES = [64,128,256,512,1024,2048]
-APP_SCALE_NAMES = ['N','S','M','L','XL','H']
-NODE_SCALES = [1,2,4,8,16,64]
+APP_SCALES = [64,128,256,512,1024,1400,2048]
+APP_SCALE_NAMES = ['N','S','M','L','XL','H','XH']
+NODE_SCALES = [1,2,4,8,16,32,64,128]
 lookup_ival = dict(((k1,k2),f"{v2}_{k1}") for (k2,v2) in zip(APP_SCALES, APP_SCALE_NAMES) for k1 in NODE_SCALES)
 
 class TopologyCache(UserDict):
