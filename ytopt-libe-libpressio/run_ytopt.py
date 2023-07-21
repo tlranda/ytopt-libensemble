@@ -182,9 +182,11 @@ sim_specs = {
         'machine_info': MACHINE_INFO,
     },
 }
+print(cs.get_hyperparameter_names())
 gen_specs = {
     'gen_f': persistent_ytopt,
-    'out': [(name, int, (1,)) for name in cs.get_hyperparameter_names()],
+    'out': [(name, '<U50', (1,)) for name in cs.get_hyperparameter_names() if name.startswith('c')] +\
+           [(name, int, (1,)) for name in cs.get_hyperparameter_names() if name.startswith('p')],
     'persis_in': sim_specs['in'] +\
                  ['FOM', 'elapsed_sec', 'machine_identifier', 'mpi_ranks', 'threads_per_node',
                   'ranks_per_node', 'gpu_enabled', 'libE_id', 'libE_workers'],

@@ -75,7 +75,7 @@ def parse(prs=None, args=None):
         template = pathlib.Path(args.ens_template_export)
         args.ens_template_export = template.parent.joinpath(template.stem + '_' + secrets.token_hex(nbytes=4) + template.suffix)
         script = pathlib.Path(args.ens_script_export)
-        args.ens_script_export = script.parent.joinpath(script.stem + '_' + secrets.token_hex(nbytes=4) + template.suffix)
+        args.ens_script_export = script.parent.joinpath(script.stem + '_' + secrets.token_hex(nbytes=4) + script.suffix)
 
     # Environments
     if args.configure_environment is None:
@@ -94,7 +94,7 @@ def parse(prs=None, args=None):
     #           Substitutions defined as tuple of filename and the template string itself
     args.seds = {
         ('ens_dir_path',): [(args.ens_template_export, "s/^ENSEMBLE_DIR_PATH = .*/ENSEMBLE_DIR_PATH = {}/"),],
-        ('json',): [(args.ens_template_export, 's/PLOPPER_TARGET = .*/PLOPPER_TARGET = "template_jsons/roibin_{}.json"'),],
+        ('json',): [(args.ens_template_export, 's/PLOPPER_TARGET = .*/PLOPPER_TARGET = "template_jsons\/roibin_{}.json"/'),],
         ('machine_identifier',): [(args.ens_template_export, "s/MACHINE_IDENTIFIER = .*/MACHINE_IDENTIFIER = {}/"),],
         ('seed_configspace',): [(args.ens_template_export, "s/CONFIGSPACE_SEED = .*/CONFIGSPACE_SEED = {}/"),],
         ('seed_ytopt',): [(args.ens_template_export, "s/YTOPT_SEED = .*/YTOPT_SEED = {}/"),],
@@ -120,10 +120,11 @@ def main(args=None):
         args_values = tuple([getattr(args, arg) for arg in sed_arg])
         for (target_file, template_string) in substitution_specs:
             print(f"Set {sed_arg} to {args_values} in {target_file}")
-            sed_command = ['sed', '-i', template_string.format(*args_values), target_file]
+            sed_command = ['sed', '-i', template_string.format(*args_values), str(target_file)]
             proc = subprocess.run(sed_command, capture_output=True)
             if proc.returncode != 0:
                 print(sed_command)
+                print(" ".join(sed_command))
                 print(proc.stdout.decode('utf-8'))
                 print(proc.stderr.decode('utf-8'))
                 SedSubstitutionFailure = f"Substitution '{sed_arg}' in '{target_file}' failed"
