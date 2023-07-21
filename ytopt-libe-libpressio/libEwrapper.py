@@ -15,14 +15,14 @@ def build():
                           help="Number of libEnsemble workers (EXCLUDING manager; default %(default)s)")
     ensemble.add_argument("--max-evals", type=int, default=4,
                           help="Maximum evaluations collected by ensemble (default: %(default)s)")
-    ensemble.add_argument("--comms", choices=['mpi','local', default='local',
+    ensemble.add_argument("--comms", choices=['mpi','local'], default='local',
                           help="Which communicator is used within ensemble (default: %(default)s)")
     ensemble.add_argument("--configure-environment", choices=["none", "polaris", "craympi"], nargs="*",
                           help="Set up environment based on known patterns (default: No setup)")
     ensemble.add_argument("--machine-identifier", default=None,
                           help="Used to name the executing machine in records (default: detect suitable name)")
     # Files
-    files = prs.add_argument("Files", "Arguments to control file management")
+    files = prs.add_argument_group("Files", "Arguments to control file management")
     files.add_argument("--ens-dir-path", default=None,
                        help="Name the ensemble directory suffix (default: prefix 'ensemble_' has no custom suffix)")
     files.add_argument("--ens-static-path", action='store_true',
@@ -67,16 +67,16 @@ def parse(prs=None, args=None):
     args.ens_script_export = args.ens_script
     if not args.ens_static:
         template = pathlib.Path(args.ens_template_export)
-        args.ens_template_export = template.parent.joinpath(template.stem + '_' + secrets.token_hex(nbytes=4))
+        args.ens_template_export = template.parent.joinpath(template.stem + '_' + secrets.token_hex(nbytes=4) + template.suffix)
         script = pathlib.Path(args.ens_script_export)
-        args.ens_script_export = script.parent.joinpath(script.stem + '_' + secrets.token_hex(nbytes=4))
+        args.ens_script_export = script.parent.joinpath(script.stem + '_' + secrets.token_hex(nbytes=4) + template.suffix)
 
     # Environments
     if args.configure_environment is None:
         args.configure_environment = []
 
     # Machine identifier
-    if args.machine_identifer is None:
+    if args.machine_identifier is None:
         import platform
         args.machine_identifier = f'"{platform.node()}"'
     else:
@@ -87,11 +87,11 @@ def parse(prs=None, args=None):
     # Value: List of substitutions using these subsitutions
     #           Substitutions defined as tuple of filename and the template string itself
     args.seds = {
-        ('ens_dir_path',): [(args.ens_template, "s/^ENSEMBLE_DIR_PATH = .*/ENSEMBLE_DIR_PATH = {}"),],
-        ('machine_identifier',): [(args.ens_template, "s/MACHINE_IDENTIFIER = .*/MACHINE_IDENTIIFER = {}"),],
-        ('seed_configspace',): [(args.ens_template, "s/CONFIGSPACE_SEED = .*/CONFIGSPACE_SEED = {}"),],
-        ('seed_ytopt',): [(args.ens_template, "s/YTOPT_SEED = .*/YTOPT_SEED = {}"),],
-        ('seed_numpy',): [(args.ens_template, "s/NUMPY_SEED = .*/NUMPY_SEED = {}"),],
+        ('ens_dir_path',): [(args.ens_template_export, "s/^ENSEMBLE_DIR_PATH = .*/ENSEMBLE_DIR_PATH = {}/"),],
+        ('machine_identifier',): [(args.ens_template_export, "s/MACHINE_IDENTIFIER = .*/MACHINE_IDENTIIFER = {}/"),],
+        ('seed_configspace',): [(args.ens_template_export, "s/CONFIGSPACE_SEED = .*/CONFIGSPACE_SEED = {}/"),],
+        ('seed_ytopt',): [(args.ens_template_export, "s/YTOPT_SEED = .*/YTOPT_SEED = {}/"),],
+        ('seed_numpy',): [(args.ens_template_export, "s/NUMPY_SEED = .*/NUMPY_SEED = {}/"),],
     }
 
     return args
@@ -99,8 +99,15 @@ def parse(prs=None, args=None):
 def main(args=None):
     args = parse(args)
     # Copy files
-    shutil.copy2(args.ens_template, args.ens_template_export)
-    shutil.copy2(args.ens_script, args.ens_script_export)
+    shuffle = [(args.ens_template, args.ens_template_export, 'LibEnsemble template'),
+               (args.ens_script, args.ens_script_export, 'Job script'),]
+    for (copy_from, copy_to, identifier) in shuffle:
+        try:
+            shutil.copy2(copy_from, copy_to)
+        except:
+            print(f"Failed to copy {identifier} <-- {copy_from}")
+        else:
+            print(f"Copy {identifier} --> {copy_to}")
     # Edit files
     for (sed_arg, substitution_specs) in args.seds.items():
         args_values = tuple([getattr(args, arg) for arg in sed_arg])
@@ -178,7 +185,7 @@ export EVALS="--max-evals {args.max_evals}"
 {env_adjust}
 
 # Launch libE
-pycommand="python $EXE $COMMS $NWORKERS --learner=RF $EVALS {args.bonus_runtime_args}" # > out.txt 2>&1"
+pycommand="python $EXE $COMMS $NWORKERS --learner=RF $EVALS"
 echo "$pycommand";
 eval "$pycommand";
 echo;
@@ -207,4 +214,7 @@ echo;
                 print(f"{name} could not be migrated <-- {migration_from}")
             else:
                 print(f"{name} migrated --> {migration_to}")
+
+if __name__ == '__main__':
+    main()
 
