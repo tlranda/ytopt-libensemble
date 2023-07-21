@@ -10,6 +10,7 @@ The number of concurrent evaluations of the objective function will be 4-1=3.
 """
 
 import os
+import pathlib
 import glob
 import numpy as np
 NUMPY_SEED = 1
@@ -137,7 +138,7 @@ p1 = CSH.UniformIntegerHyperparameter(name='p1', lower=1, upper=4) # Roibin Thre
 p2 = CSH.UniformIntegerHyperparameter(name='p2', lower=1, upper=4) # Binning Threads
 cs.add_hyperparameters([c0,p0,p1,p2])
 if 'blosc' in PLOPPER_TARGET:
-    p3 = CSH.UniformIntegerHyperparameter(name='p3', lower=1, upper=4, default=1) # Blosc internal threads
+    p3 = CSH.UniformIntegerHyperparameter(name='p3', lower=1, upper=4) # Blosc internal threads
     cs.add_hyperparameters([p3])
 
 ytoptimizer = Optimizer(
@@ -200,10 +201,10 @@ alloc_specs = {
 exit_criteria = {'sim_max': int(user_args['max-evals'])}
 persis_info = add_unique_random_streams({}, nworkers+1)
 
-here = os.getcwd() + '/'
+here = pathlib.Path('.')
 libE_specs['use_worker_dirs'] = True
 libE_specs['sim_dirs_make'] = False
-libE_specs['sim_dir_symlink_files'] = [here+f for f in []]
+libE_specs['sim_dir_symlink_files'] = [here.joinpath(f) for f in [PLOPPER_TARGET]]
 ENSEMBLE_DIR_PATH = ""
 libE_specs['ensemble_dir_path'] = f"./ensemble_{ENSEMBLE_DIR_PATH}"
 print(f"This ensemble operates as: {libE_specs['ensemble_dir_path']}"+"\n")
@@ -227,7 +228,7 @@ def manager_save(H, gen_specs, libE_specs):
     full_log.to_csv(output, index=False)
     print(f"All manager-finished results logged to {output}")
 
-if __name__ == '__main__!':
+if __name__ == '__main__':
     H, persis_info, flag = libE(sim_specs, gen_specs, exit_criteria, persis_info,
                                 alloc_specs=alloc_specs, libE_specs=libE_specs)
     if is_manager:
