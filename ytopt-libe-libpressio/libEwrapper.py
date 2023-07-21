@@ -4,11 +4,17 @@ import os, pathlib, stat, shutil
 import secrets
 import warnings
 
+# Determine available experiments
+json_choices = sorted([_.stem[7:] for _ in pathlib.Path('template_jsons').iterdir()])
+
 def build():
     prs = argparse.ArgumentParser()
     prs.add_argument("--error-demotion", action='store_true',
                      help="Demote some wrapper errors to warnings, may permit some unwanted behaviors (default: Error and halt)")
-    # Scaling
+    # Experimental differentiation
+    experiment = prs.add_argument_group("Experiment", "Arguments to control experiments")
+    experiment.add_argument("--json", choices=[json_choices], default=json_choices[0],
+                            help="Json template to use in experiment (default: %(default)s)")
     # Ensemble
     ensemble = prs.add_argument_group("LibEnsemble", "Arguments to control libEnsemble behavior")
     ensemble.add_argument("--ensemble-workers", type=int, default=1,
@@ -88,6 +94,7 @@ def parse(prs=None, args=None):
     #           Substitutions defined as tuple of filename and the template string itself
     args.seds = {
         ('ens_dir_path',): [(args.ens_template_export, "s/^ENSEMBLE_DIR_PATH = .*/ENSEMBLE_DIR_PATH = {}/"),],
+        ('json',): [(args.ens_template_export, 's/PLOPPER_TARGET = .*/PLOPPER_TARGET = "template_jsons/roibin_{}.json"'),],
         ('machine_identifier',): [(args.ens_template_export, "s/MACHINE_IDENTIFIER = .*/MACHINE_IDENTIFIER = {}/"),],
         ('seed_configspace',): [(args.ens_template_export, "s/CONFIGSPACE_SEED = .*/CONFIGSPACE_SEED = {}/"),],
         ('seed_ytopt',): [(args.ens_template_export, "s/YTOPT_SEED = .*/YTOPT_SEED = {}/"),],
@@ -116,6 +123,7 @@ def main(args=None):
             sed_command = ['sed', '-i', template_string.format(*args_values), target_file]
             proc = subprocess.run(sed_command, capture_output=True)
             if proc.returncode != 0:
+                print(sed_command)
                 print(proc.stdout.decode('utf-8'))
                 print(proc.stderr.decode('utf-8'))
                 SedSubstitutionFailure = f"Substitution '{sed_arg}' in '{target_file}' failed"

@@ -72,10 +72,6 @@ for arg in int_args:
 CONFIGSPACE_SEED = 1234
 YTOPT_SEED = 2345
 
-# Define space
-cs = CS.ConfigurationSpace(seed=CONFIGSPACE_SEED)
-
-
 # Cross-architecture is out-of-scope for now so we determine this for the current platform and leave it at that
 MPI_RANKS = 64
 cpu_override = None
@@ -132,6 +128,18 @@ if max_depth not in sequence:
 print(f"Depths are based on {threads_per_node} threads on each node, shared across {ranks_per_node} MPI ranks on each node")
 print(f"Selectable depths are: {sequence}"+"\n")
 
+# Define space
+PLOPPER_TARGET = "template_jsons/template.json"
+cs = CS.ConfigurationSpace(seed=CONFIGSPACE_SEED)
+c0 = CSH.Constant(name='c0', value=PLOPPER_TARGET)
+p0 = CSH.UniformIntegerHyperparameter(name='p0', lower=1, upper=60) # MPI Threads
+p1 = CSH.UniformIntegerHyperparameter(name='p1', lower=1, upper=4) # Roibin Threads
+p2 = CSH.UniformIntegerHyperparameter(name='p2', lower=1, upper=4) # Binning Threads
+cs.add_hyperparameters([c0,p0,p1,p2])
+if 'blosc' in PLOPPER_TARGET:
+    p3 = CSH.UniformIntegerHyperparameter(name='p3', lower=1, upper=4, default=1) # Blosc internal threads
+    cs.add_hyperparameters([p3])
+
 ytoptimizer = Optimizer(
     num_workers = num_sim_workers,
     space = cs,
@@ -159,7 +167,7 @@ MACHINE_INFO = {
 # LibEnsemble structures
 sim_specs = {
     'sim_f': init_obj,
-    'in': [],
+    'in': cs.get_hyperparameter_names(),
     'out': [('FOM', float, (1,)),
             ('elapsed_sec', float, (1,)),
             ('machine_identifier', '<U30', (1,)),
@@ -175,7 +183,7 @@ sim_specs = {
 }
 gen_specs = {
     'gen_f': persistent_ytopt,
-    'out': [],
+    'out': [(name, int, (1,)) for name in cs.get_hyperparameter_names()],
     'persis_in': sim_specs['in'] +\
                  ['FOM', 'elapsed_sec', 'machine_identifier', 'mpi_ranks', 'threads_per_node',
                   'ranks_per_node', 'gpu_enabled', 'libE_id', 'libE_workers'],
@@ -219,7 +227,7 @@ def manager_save(H, gen_specs, libE_specs):
     full_log.to_csv(output, index=False)
     print(f"All manager-finished results logged to {output}")
 
-if __name__ == '__main__':
+if __name__ == '__main__!':
     H, persis_info, flag = libE(sim_specs, gen_specs, exit_criteria, persis_info,
                                 alloc_specs=alloc_specs, libE_specs=libE_specs)
     if is_manager:
