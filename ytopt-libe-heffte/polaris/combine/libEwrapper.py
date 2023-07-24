@@ -1,12 +1,51 @@
 import subprocess
 import argparse
-import os, stat, shutil
+import os, pathlib, stat, shutil
+import secrets
 import warnings
 
 def build():
     parser = argparse.ArgumentParser()
     parser.add_argument("--error-demotion", action='store_true',
                         help="Demote wrapper errors to warnings, may permit unwanted behaviors (default: Error and cease operation)")
+    # ENSEMBLE
+    ensemble = parser.add_argument_group("LibEnsemble", "Arguments that control libEnsemble behavior")
+    ensemble.add_argument("--ensemble-workers", type=int, default=1,
+                        help="Number of libEnsemble workers (EXCLUDING MANAGER; default: %(default)s)")
+    ensemble.add_argument("--max-evals", type=int, default=4,
+                        help="Maximum evaluations collected by ensemble (default: %(default)s)")
+    ensemble.add_argument("--comms", choices=['mpi','local'], default='local',
+                        help="Which call setup is used for libEnsemble itself (default: %(default)s)")
+    ensemble.add_argument("--configure-environment", choices=["none", "polaris", "craympi"], nargs="*",
+                        help="Set up environment based on known systems (default: No customization)")
+    ensemble.add_argument("--machine-identifier", type=str, default=None,
+                        help="Used to identify if a configuration's performance is already known on this machine (default: HOSTNAME)")
+    # Files
+    files = parser.add_argument_group("Files", "Arguments to control file management")
+    files.add_argument("--ens-dir-path", default=None,
+                       help="Name the ensemble directory suffix (default: prefix 'ensemble_' has no custom suffix)")
+    files.add_argument("--ens-static-path", action='store_true',
+                       help="Disable randomization of ensemble directory suffix (default: Added to prevent filename collisions LibEnsemble cannot tolerate)")
+    files.add_argument("--ens-template", default="run_ytopt.py",
+                       help="Template for libEnsemble driver (default: %(default)s)")
+    files.add_argument("--ens-script", default="qsub.batch",
+                       help="Template for job submission script that calls libEnsemble driver (default: %(default)s)")
+    files.add_argument("--ens-static", action='store_true',
+                       help="Override templates rather than copying to unique name (default: Vary name to prevent multi-job clobbering)")
+    # SEEDS
+    seeds = parser.add_argument_group("Seeds", "Arguments that control randomization seeding")
+    seeds.add_argument("--seed-configspace", type=int, default=1234,
+                        help="Seed for the ConfigurationSpace object (default: %(default)s)")
+    seeds.add_argument("--seed-ytopt", type=int, default=2345,
+                        help="Seed for the Ytopt Optimizer (default: %(default)s)")
+    seeds.add_argument("--seed-numpy", type=int, default=1,
+                        help="Seed for Numpy default random stream (default: %(default)s)")
+    # Job management
+    job = parser.add_argument_group("Job", "Arguments to control job behavior")
+    job.add_argument("--launch-job", action='store_true',
+                     help="Execute job script after writing it (default: prepare script only)")
+    job.add_argument("--display-results", action='store_true',
+                     help="ONLY active when --launch-job supplied; display results when job completes (default: NOT displayed)")
     #SCALING
     scaling = parser.add_argument_group("Scaling", "Arguments that control scale of evaluated tests")
     scaling.add_argument("--mpi-ranks", type=int, default=2,
@@ -27,24 +66,6 @@ def build():
                         help="Override #ranks per node on CPUs (default: #threads on cpu or --cpu-override when specified)")
     scaling.add_argument("--gpu-enabled", action="store_true",
                         help="Enable GPU treatment for libensemble (default: Disabled)")
-    # ENSEMBLE
-    ensemble = parser.add_argument_group("LibEnsemble", "Arguments that control libEnsemble behavior")
-    ensemble.add_argument("--ensemble-workers", type=int, default=1,
-                        help="Number of libEnsemble workers (EXCLUDING MANAGER; default: %(default)s)")
-    ensemble.add_argument("--max-evals", type=int, default=4,
-                        help="Maximum evaluations collected by ensemble (default: %(default)s)")
-    ensemble.add_argument("--comms", choices=['mpi','local'], default='local',
-                        help="Which call setup is used for libEnsemble itself (default: %(default)s)")
-    ensemble.add_argument("--configure-environment", choices=["none", "polaris", "craympi"], nargs="*",
-                        help="Set up environment based on known systems (default: No customization)")
-    ensemble.add_argument("--machine-identifier", type=str, default=None,
-                        help="Used to identify if a configuration's performance is already known on this machine (default: HOSTNAME)")
-    ensemble.add_argument("--ensemble-dir-path", type=str, default=None,
-                        help="Set the ensemble dir path (default: Picks a suitably random extension to avoid collisions)")
-    ensemble.add_argument("--ensemble-path-randomization", action='store_true',
-                        help="Add randomization to customized ensemble-dir-path's (default: NOT added)")
-    ensemble.add_argument("--launch-job", action='store_true',
-                        help="Launch job once prepared (default: NOT launched, job script only written)")
     # GaussianCopula
     gc = parser.add_argument_group("GaussianCopula", "Arguments for Gaussian Copula (must use --libensemble-target=run_gctla.py)")
     gc.add_argument("--gc-sys", type=int, default=None,
@@ -69,26 +90,6 @@ def build():
                     help="Ideal proportion of search space to target in auto-budgeting (default: libensemble-target's default)")
     gc.add_argument("--gc-ideal-attrition", type=float, default=None,
                     help="Attrition rate from ideal portion after the GC constrains the space (default: libensemble-target's default")
-    # SEEDS
-    seeds = parser.add_argument_group("Seeds", "Arguments that control randomization seeding")
-    seeds.add_argument("--seed-configspace", type=int, default=1234,
-                        help="Seed for the ConfigurationSpace object (default: %(default)s)")
-    seeds.add_argument("--seed-ytopt", type=int, default=2345,
-                        help="Seed for the Ytopt Optimizer (default: %(default)s)")
-    seeds.add_argument("--seed-numpy", type=int, default=1,
-                        help="Seed for Numpy default random stream (default: %(default)s)")
-    # FILES
-    files = parser.add_argument_group("Files", "Arguments that dictate input and output files")
-    files.add_argument("--libensemble-target", type=str, default="run_ytopt.py",
-                        help="Template script invoked as libEnsemble caller (default: %(default)s)")
-    files.add_argument("--libensemble-export", type=str, default="run_ytopt.py",
-                        help="Perform modifications to template script to this name -- useful if scheduling multiple jobs that could simultaneously edit the template (default: %(default)s)")
-    files.add_argument("--libensemble-randomization", action="store_true",
-                        help="Add randomization to customized libensemble export name (default: NOT added)")
-    files.add_argument("--generated-script", type=str, default="qsub.batch",
-                        help="Qsub script is written to this location, then executed (default: %(default)s)")
-    files.add_argument("--display-results", action='store_true',
-                        help="ONLY active when --launch-job supplied; display results when job completes (default: NOT displayed)")
     return parser
 
 def parse(prs=None, args=None):
@@ -97,28 +98,35 @@ def parse(prs=None, args=None):
         prs = build()
     if args is None:
         args = prs.parse_args()
-    # Ensure string is edited in file to be None rather than using None as a str-like object
-    if args.ensemble_dir_path is not None:
-        args.ensemble_dir_path = '"' + args.ensemble_dir_path
-    else:
-        args.ensemble_dir_path = ''
-    if args.ensemble_path_randomization:
-        import secrets
-        if args.ensemble_dir_path == '':
-            args.ensemble_dir_path = '"'
-        args.ensemble_dir_path += "_"+secrets.token_hex(nbytes=4)
-    args.ensemble_dir_path += '"' # close quote
-    if args.ensemble_dir_path == '"':
-        args.ensemble_dir_path = '""'
+    # Quote the ensemble dir name and add randomization
+    if args.ens_dir_path is not None:
+        args.ens_dir_path = ''
+    if not args.ens_static_path:
+        dpath = pathlib.Path(args.ens_dir_path)
+        args.ens_dir_path = dpath.parent.joinpath(dpath.stem + "_" + secrets.token_hex(nbytes=4))
+    args.ens_dir_path = f'"{args.ens_dir_path}"'
+
+    # Similar treatment for template and script
+    args.ens_template_export = args.ens_template
+    args.ens_script_export = args.ens_script
+    if not args.ens_static:
+        template = pathlib.Path(args.ens_template_export)
+        args.ens_template_export = template.parent.joinpath(template.stem + '_' + secrets.token_hex(nbytes=4) + template.suffix)
+        script = pathlib.Path(args.ens_script_export)
+        args.ens_script_export = script.parent.joinpath(script.stem + '_' + secrets.token_hex(nbytes=4) + script.suffix)
+
     # Environments
     if args.configure_environment is None:
         args.configure_environment = []
+
     # Machine identifier selection
     if args.machine_identifier is None:
         import platform
         args.machine_identifier = f'"{platform.node()}"'
     else:
         args.machine_identifier = f'"{args.machine_identifier}"'
+
+    # Scaling and system overides
     if args.cpu_override is None:
         args.cpu_override = "None"
     else:
@@ -140,32 +148,7 @@ def parse(prs=None, args=None):
         if not args.error_demotion:
             raise ValueError(WarningsAsErrors)
     args.gpu_enabled = str(args.gpu_enabled)
-    if args.libensemble_randomization:
-        import secrets
-        try:
-            args.libensemble_export, extension = args.libensemble_export.rsplit('.',1)
-        except ValueError:
-            extension = 'py'
-        args.libensemble_export += secrets.token_hex(nbytes=4)
-        args.libensemble_export += '.'+extension
-    protected = ['run_ytopt.py', 'run_gctla.py']
-    if args.libensemble_export in protected:
-        backup = args.libensemble_export + ".bak"
-        increment = None
-        while os.path.exists(backup):
-            if increment is None:
-                backup += "_1"
-                increment = 1
-            else:
-                increment += 1
-                backup = backup.rsplit("_",1)[0] + str(increment)
-        TemplateOverride = f"Processing will override template {args.libensemble_export}, which may not be desired!"
-        if args.error_demotion:
-            TemplateOverride += f" Protecting the original template by backing it up to {backup}"
-        warnings.warn(TemplateOverride)
-        if not args.error_demotion:
-            raise ValueError(WarningsAsErrors)
-        shutil.copy2(args.libensemble_export, backup)
+
     # Gaussian Copula arguments
     if args.gc_sys is None:
         args.gc_sys = args.mpi_ranks
@@ -173,21 +156,8 @@ def parse(prs=None, args=None):
         args.gc_app = args.application_scale
     if type(args.gc_input) is str:
         args.gc_input = [args.gc_input]
-    # Designated sed arguments
-    args.designated_sed = {
-        'mpi_ranks': [(args.libensemble_export, "s/MPI_RANKS = [0-9]*/MPI_RANKS = {}/"),],
-        'worker_timeout': [(args.libensemble_export, "s/'app_timeout': [0-9]*,/'app_timeout': {},/")],
-        'application_scale': [(args.libensemble_export, "s/APP_SCALE = [0-9]*/APP_SCALE = {}/")],
-        'ensemble_dir_path': [(args.libensemble_export, "s/^ENSEMBLE_DIR_PATH = .*/ENSEMBLE_DIR_PATH = {}/")],
-        'machine_identifier': [(args.libensemble_export, "s/MACHINE_IDENTIFIER = .*/MACHINE_IDENTIFIER = {}/")],
-        'cpu_override': [(args.libensemble_export, "s/cpu_override = .*/cpu_override = {}/")],
-        'cpu_ranks_per_node': [(args.libensemble_export, "s/cpu_ranks_per_node = .*/cpu_ranks_per_node = {}/")],
-        'gpu_enabled': [(args.libensemble_export, "s/gpu_enabled = .*/gpu_enabled = {}/")],
-        'seed_configspace': [(args.libensemble_export, "s/CONFIGSPACE_SEED = .*/CONFIGSPACE_SEED = {}/")],
-        'seed_ytopt': [(args.libensemble_export, "s/YTOPT_SEED = .*/YTOPT_SEED = {}/")],
-        'seed_numpy': [(args.libensemble_export, "s/NUMPY_SEED = .*/NUMPY_SEED = {}/")],
-    }
-    if 'gc' in args.libensemble_target:
+    # Provide runtime args to run_gctla.py as needed / defined
+    if 'gc' in args.ens_template_export.stem:
         try:
             args.bonus_runtime_args = f"--constraint-sys {args.gc_sys} --constraint-app {args.gc_app} --input {' '.join(args.gc_input)} --auto-budget={args.gc_auto_budget}"
             if args.gc_auto_budget:
@@ -205,24 +175,65 @@ def parse(prs=None, args=None):
             raise ValueError(f"Must supply --gc-input arguments to run Gaussian Copula")
     else:
         args.bonus_runtime_args = ""
+
+    # Set up `sed` arguments
+    # Key: Tuple of args attribute names (in order) to use to fill template string values
+    # Value: List of substitutions using these subsitutions
+    #           Substitutions defined as tuple of filename and the template string itself
+    args.seds = {
+        ('ens_dir_path',): [(args.ens_template_export, "s/^ENSEMBLE_DIR_PATH = .*/ENSEMBLE_DIR_PATH = {}/"),],
+        ('machine_identifier',): [(args.ens_template_export, "s/MACHINE_IDENTIFIER = .*/MACHINE_IDENTIFIER = {}/"),],
+        ('seed_configspace',): [(args.ens_template_export, "s/CONFIGSPACE_SEED = .*/CONFIGSPACE_SEED = {}/"),],
+        ('seed_ytopt',): [(args.ens_template_export, "s/YTOPT_SEED = .*/YTOPT_SEED = {}/"),],
+        ('seed_numpy',): [(args.ens_template_export, "s/NUMPY_SEED = .*/NUMPY_SEED = {}/"),],
+        ('mpi_ranks',): [(args.ens_template_export, "s/MPI_RANKS = [0-9]*/MPI_RANKS = {}/"),],
+        ('worker_timeout',): [(args.ens_template_export, "s/'app_timeout': [0-9]*,/'app_timeout': {},/"),],
+        ('application_scale',): [(args.ens_template_export, "s/APP_SCALE = [0-9]*/APP_SCALE = {}/"),],
+        ('cpu_override',): [(args.ens_template_export, "s/cpu_override = .*/cpu_override = {}/"),],
+        ('cpu_ranks_per_node',): [(args.ens_template_export, "s/cpu_ranks_per_node = .*/cpu_ranks_per_node = {}/"),],
+        ('gpu_enabled',): [(args.ens_template_export, "s/gpu_enabled = .*/gpu_enabled = {}/"),],
+    }
     return args
+
+def sed_error(sed_command, sed_arg, target_file):
+    print(sed_command)
+    print(" ".join(sed_command))
+    print(proc.stdout.decode('utf-8'))
+    print(proc.stderr.decode('utf-8'))
+    SedSubstitutionFailure = f"Substitution '{sed_arg}' in '{target_file}' failed"
+    raise ValueError(SedSubstitutionFailure)
 
 if __name__ == '__main__':
     args = parse()
-    # Make all substitutions based on arguments
-    shutil.copy2(args.libensemble_target, args.libensemble_export)
-    for (sed_arg, substitution_specs) in args.designated_sed.items():
-        for (target_file, substitution) in substitution_specs:
-            args_value = getattr(args, sed_arg)
-            print(f"Set {sed_arg} to {args_value} in {target_file}")
-            sed_command = ['sed','-i', substitution.format(args_value), target_file]
+    # Copy files
+    shuffle = [(args.ens_template, args.ens_template_export, 'LibEnsemble template'),
+               (args.ens_script, args.ens_script_export, 'Job script'),]
+    for (copy_from, copy_to, identifier) in shuffle:
+        try:
+            shutil.copy2(copy_from, copy_to)
+        except:
+            print(f"Failed to copy {identifier} <-- {copy_from}")
+        else:
+            print(f"Copy {identifier} --> {copy_to}")
+    # Edit files
+    for (sed_arg, substitution_specs) in args.seds.items():
+        args_values = tuple([getattr(args, arg) for arg in sed_arg])
+        for (target_file, template_string) in substitution_specs:
+            print(f"Set {sed_arg} to {args_values} in {target_file}")
+            sed_command = ['sed', '-i', template_string.format(*args_values), str(target_file)]
             proc = subprocess.run(sed_command, capture_output=True)
             if proc.returncode != 0:
-                print(proc.stdout.decode('utf-8'))
-                print(proc.stderr.decode('utf-8'))
-                raise ValueError(f"sed Substitution for '{sed_arg}' in '{target_file}' Failed")
+                if any(["sed: -I or -i may not be used with stdin" in output.decode('utf-8') for output in [proc.stdout, proc.stderr]]):
+                    sed_command.insert(2,"''")
+                    proc = subprocess.run(sed_command, capture_output=True)
+                    if proc.returncode != 0:
+                        sed_error(sed_command, sed_arg, target_file)
+                else:
+                    sed_error(sed_command, sed_arg, target_file)
             else:
-                print("Adjustment OK!")
+                print("  -- SED OK")
+
+    # Environment
     known_environments = {
     "none": "# pass",
     "polaris": """
@@ -268,7 +279,7 @@ echo;
 # - Workers submit tasks to the nodes in the job available via scheduler (mpirun, aprun, etc) in plopper
 
 # Name of calling script
-export EXE={args.libensemble_export}
+export EXE="{args.ens_template_export}"
 
 # Communication Method
 export COMMS="--comms {args.comms}"
@@ -290,30 +301,31 @@ echo;
 date;
 echo;
 """
-    print(f"Produce job script {args.generated_script}")
-    with open(args.generated_script, 'w') as f:
+    print(f"Produce job script {args.ens_script_export}")
+    with open(args.ens_script_export, 'w') as f:
         f.write(job_contents)
     # Set RWX for owner, RX for all others
-    os.chmod(args.generated_script, stat.S_IRWXU |
-                                    stat.S_IRGRP | stat.S_IXGRP |
-                                    stat.S_IROTH | stat.S_IXOTH)
-    print("OK!")
-    ensemble_operating_dir = f"./ensemble_{args.ensemble_dir_path[1:-1]}"
+    os.chmod(args.ens_script_export, stat.S_IRWXU |
+                                     stat.S_IRGRP | stat.S_IXGRP |
+                                     stat.S_IROTH | stat.S_IXOTH)
+    print("Script written")
+    ensemble_operating_dir = f"./ensemble_{args.ens_dir_path[1:-1]}"
     if args.launch_job:
-        proc = subprocess.run(f"./{args.generated_script}")
-        migrated_job_script = f"{ensemble_operating_dir}/{args.generated_script}"
-        migrations = [(args.generated_script, migrated_job_script, "Job Script"),
-                      ('ensemble.log', f"{ensemble_operating_dir}/ensemble.log", "Ensemble logs"),]
+        proc = subprocess.run(f"./{args.ens_script_export}")
+        migrations = [(args.ens_script_export, ens_operating_dir.joinpath(args.ens_script_export), "Job script"),
+                      (args.ens_template_export, ens_operating_dir.joinpath(args.ens_template_export), "LibEnsemble driver"),
+                      ('ensemble.log', ens_operating_dir.joinpath("ensemble.log"), "Ensemble logs"),
+                      ('ytopt.log', ens_operating_dir.joinpath("ytopt.log"), "Ytopt logs"),]
         # If the target was modified in-place, do NOT move it
         if args.libensemble_target != args.libensemble_export:
             migrations.append((args.libensemble_export, f"{ensemble_operating_dir}/{args.libensemble_export}", "LibEnsemble script"))
         for migration_from, migration_to, identifier in migrations:
             try:
-                os.rename(migration_from, migration_to)
+                shutil.move(migration_from, migration_to)
             except:
-                print(f"{identifier} could not be migrated -- {migration_from}")
+                print(f"{identifier} could not be migrated <-- {migration_from}")
             else:
-                print(f"{identifier} migrated to ensemble directory -- {migration_to}")
+                print(f"{identifier} migrated --> {migration_to}")
         if proc.returncode == 0 and args.display_results:
             import pandas as pd
             print("Finished evaluations")
