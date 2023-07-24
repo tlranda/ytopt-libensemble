@@ -19,7 +19,7 @@ for app_scale in ${app_scales[@]}; do
 for n_ranks in ${mpi_ranks[@]}; do
 for n_workers in ${workers[@]}; do
     echo "Calling on ${n_workers} workers with ${n_ranks} mpi ranks per worker for size ${app_scale}";
-    call="python libEwrapper.py --mpi-ranks ${n_ranks} --worker-timeout 300 --application-scale ${app_scale} --cpu-override 256 --cpu-ranks-per-node 64 --ensemble-workers ${n_workers} --max-evals 200 --configure-environment craympi --machine-identifier theta-knl --system theta --ensemble-dir-path Theta_${n_ranks}r_${app_scale}a --ensemble-path-randomization --libensemble-export libE_Run_.py --libensemble-randomization --launch-job --display-results";
+    call="python libEwrapper.py --mpi-ranks ${n_ranks} --worker-timeout 300 --application-scale ${app_scale} --cpu-override 256 --cpu-ranks-per-node 64 --ensemble-workers ${n_workers} --max-evals 200 --configure-environment craympi --machine-identifier theta-knl --system theta --ens-dir-path Theta_${n_ranks}r_${app_scale}a --launch-job --display-results";
     date;
     echo "${call}";
     eval "${call}";
