@@ -312,10 +312,10 @@ echo;
     ensemble_operating_dir = f"./ensemble_{args.ens_dir_path[1:-1]}"
     if args.launch_job:
         proc = subprocess.run(f"./{args.ens_script_export}")
-        migrations = [(args.ens_script_export, ens_operating_dir.joinpath(args.ens_script_export), "Job script"),
-                      (args.ens_template_export, ens_operating_dir.joinpath(args.ens_template_export), "LibEnsemble driver"),
-                      ('ensemble.log', ens_operating_dir.joinpath("ensemble.log"), "Ensemble logs"),
-                      ('ytopt.log', ens_operating_dir.joinpath("ytopt.log"), "Ytopt logs"),]
+        migrations = [(args.ens_script_export, ensemble_operating_dir.joinpath(args.ens_script_export), "Job script"),
+                      (args.ens_template_export, ensemble_operating_dir.joinpath(args.ens_template_export), "LibEnsemble driver"),
+                      ('ensemble.log', ensemble_operating_dir.joinpath("ensemble.log"), "Ensemble logs"),
+                      ('ytopt.log', ensemble_operating_dir.joinpath("ytopt.log"), "Ytopt logs"),]
         # If the target was modified in-place, do NOT move it
         if args.libensemble_target != args.libensemble_export:
             migrations.append((args.libensemble_export, f"{ensemble_operating_dir}/{args.libensemble_export}", "LibEnsemble script"))
