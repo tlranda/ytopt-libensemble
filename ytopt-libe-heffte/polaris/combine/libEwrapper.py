@@ -158,19 +158,31 @@ def parse(prs=None, args=None):
         args.gc_app = args.application_scale
     if type(args.gc_input) is str:
         args.gc_input = [args.gc_input]
+    # Argparse is bad and doesn't put nargs>=1 into lists by default
     if type(args.gc_ignore) is str:
         args.gc_ignore = [args.gc_ignore]
+    # Join to string because this is a command line argument and can't obey normal python __str__ semantics for lists
+    if type(args.gc_ignore) is not None:
+        args.gc_ignore = " ".join(args.gc_ignore)
     # Provide runtime args to run_gctla.py as needed / defined
     if 'gc' in args.ens_template_export.stem:
         try:
             args.bonus_runtime_args = f"--constraint-sys {args.gc_sys} --constraint-app {args.gc_app} --input {' '.join(args.gc_input)} --auto-budget={args.gc_auto_budget}"
+            # These can be set for any GC run
+            gc_args = ['gc_ignore',]
+            target_args = ['--ignore',]
+            for argname, bonusargname in zip(gc_args, target_args):
+                local_arg = getattr(args, argname)
+                if local_arg is not None:
+                    args.bonus_runtime_args += f" {bonusargname} {local_arg}"
+            # These are only set when auto-budgeting is enabled
             if args.gc_auto_budget:
                 autobudget_args = ['gc_initial_quantile', 'gc_min_quantile', 'gc_budget_confidence',
                                    'gc_quantile_reduction', 'gc_ideal_proportion', 'gc_ideal_attrition',
-                                   'gc_determine_budget_only', 'gc_ignore', ]
+                                   'gc_determine_budget_only', ]
                 target_autobudget = ['--initial-quantile', '--min-quantile', '--budget-confidence',
                                      '--quantile-reduction', '--ideal-proportion', '--ideal-attrition',
-                                     '--determine-budget-only', '--ignore', ]
+                                     '--determine-budget-only', ]
                 for argname, bonusargname in zip(autobudget_args, target_autobudget):
                     local_arg = getattr(args, argname)
                     if local_arg is not None:
