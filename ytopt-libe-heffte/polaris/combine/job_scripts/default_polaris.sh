@@ -21,7 +21,7 @@ for app_scale in ${app_scales[@]}; do
 for n_ranks in ${mpi_ranks[@]}; do
 for n_workers in ${workers[@]}; do
     echo "Calling on ${n_workers} workers with ${n_ranks} mpi ranks per worker for size ${app_scale}";
-    call="{ time mpiexec -n ${n_ranks} --ppn 4 --cpu-bind-depth ./set_affinity_gpu_polaris.sh ./default_cufft.sh ${app_scale} > PolarisDefault/Polaris_${n_ranks}r_${app_scale}a_default.log 2>&1 ; } 2> PolarisDefault/Polaris_${n_ranks}r_${app_scale}a_default_time.txt"
+    call="{ time mpiexec -n ${n_ranks} --ppn 4 --cpu-bind depth ./set_affinity_gpu_polaris.sh ./default_cufft.sh ${app_scale} > PolarisDefault/Polaris_${n_ranks}r_${app_scale}a_default.log 2>&1 ; } 2> PolarisDefault/Polaris_${n_ranks}r_${app_scale}a_default_time.txt"
     date;
     echo "${call}";
     eval "${call}";
