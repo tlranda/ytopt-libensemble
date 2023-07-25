@@ -8,7 +8,7 @@
 source /home/trandall/polaris_heffte_env.sh;
 cd /home/trandall/ytune_23/tlranda-ytopt-libensemble/ytopt-libe-heffte/polaris/combine;
 
-app_scales=( 64 );
+app_scales=( 1024 );
 mpi_ranks=( 4 8 16 32 64 );
 n_nodes=(   1 2  4  8 16 );
 #mpi_ranks=( 4 8 16 32 64 256 492 );
@@ -31,7 +31,7 @@ while [[ ${#str_nodes} -lt 2 ]]; do # Must have this number equal number of plac
 done;
 for n_workers in ${workers[@]}; do
     echo "Calling on ${n_workers} workers with ${n_ranks} mpi ranks per worker for size ${app_scale}";
-    call="python libEwrapper.py --mpi-ranks ${n_ranks} --worker-timeout 300 --application-scale ${app_scale} --gpu-enabled --ensemble-workers ${n_workers} --max-evals 200 --configure-environment craympi --machine-identifier polaris-gpu --system polaris --ens-dir-path Polaris_${n_ranks}r_${app_scale}a_TL --ens-template run_gctla.py --ens-script qsub_tl.batch --gc-input logs/PolarisSourceTasks/*n_${str_app}a/manager_results.csv --gc-ignore logs/PolarisSourceTasks/Polaris_${str_nodes}n_${str_app}a/manager_results.csv --gc-initial-quantile 0.8";
+    call="python libEwrapper.py --mpi-ranks ${n_ranks} --worker-timeout 300 --application-scale ${app_scale} --gpu-enabled --ensemble-workers ${n_workers} --max-evals 30 --configure-environment craympi --machine-identifier polaris-gpu --system polaris --ens-dir-path Polaris_${n_ranks}r_${app_scale}a_TL --ens-template run_gctla.py --ens-script qsub_tl.batch --gc-input logs/PolarisSourceTasks/${str_nodes}n_*a/manager_results.csv --gc-ignore logs/PolarisSourceTasks/Polaris_${str_nodes}n_${str_app}a/manager_results.csv --gc-initial-quantile 0.8";
     date;
     echo "${call}";
     eval "${call}";
