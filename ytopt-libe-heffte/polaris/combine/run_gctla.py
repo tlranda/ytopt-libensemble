@@ -262,7 +262,9 @@ possible_configurations = uncasted_space_size * len(sequence) * (len(topology_ca
 mass_condition = deepcopy(conditions)
 mass_condition[0].num_rows = possible_configurations
 # Load data
-data = pd.concat([pd.read_csv(_) for _ in user_args['input']])
+if 'ignore' not in user_args.keys() or user_args['ignore'] is None or len(user_args['ignore']) == 0:
+    user_args['ignore'] = []
+data = pd.concat([pd.read_csv(_) for _ in user_args['input'] if _ not in user_args['ignore']])
 data_trimmed = data[['c0',]+[f'p{_}' for _ in range(10)]+['mpi_ranks', 'FLOPS']]
 # Drop configurations that had errors (not runtime failures); indicated by FLOPS >= 2.0
 data_trimmed = data_trimmed[data_trimmed['FLOPS'] < 2.0]

@@ -74,6 +74,8 @@ def build():
                     help="Application size targeted by constrained GC (default: Defers to --application-scale)")
     gc.add_argument("--gc-input", nargs="+", default=None,
                     help="Inputs to provide to the GC (no default -- must be specified!)")
+    gc.add_argument("--gc-ignore", nargs="*", default=None,
+                    help="Ignore list for the input list (helpful for over-eager globbing -- no default)")
     gc.add_argument("--gc-auto-budget", action='store_true',
                     help="Utilize auto-budgeting in libensemble-target (default: not used)")
     gc.add_argument("--gc-determine-budget-only", action='store_true',
@@ -156,6 +158,8 @@ def parse(prs=None, args=None):
         args.gc_app = args.application_scale
     if type(args.gc_input) is str:
         args.gc_input = [args.gc_input]
+    if type(args.gc_ignore) is str:
+        args.gc_ignore = [args.gc_ignore]
     # Provide runtime args to run_gctla.py as needed / defined
     if 'gc' in args.ens_template_export.stem:
         try:
@@ -163,10 +167,10 @@ def parse(prs=None, args=None):
             if args.gc_auto_budget:
                 autobudget_args = ['gc_initial_quantile', 'gc_min_quantile', 'gc_budget_confidence',
                                    'gc_quantile_reduction', 'gc_ideal_proportion', 'gc_ideal_attrition',
-                                   'gc_determine_budget_only',]
+                                   'gc_determine_budget_only', 'gc_ignore', ]
                 target_autobudget = ['--initial-quantile', '--min-quantile', '--budget-confidence',
                                      '--quantile-reduction', '--ideal-proportion', '--ideal-attrition',
-                                     '--determine-budget-only',]
+                                     '--determine-budget-only', '--ignore', ]
                 for argname, bonusargname in zip(autobudget_args, target_autobudget):
                     local_arg = getattr(args, argname)
                     if local_arg is not None:
