@@ -21,7 +21,13 @@ import multiprocessing
 multiprocessing.set_start_method('fork', force=True)
 
 # Import libEnsemble items for this test
-from libensemble.libE import libE
+try:
+    from libensemble.specs import SimSpecs, GenSpecs, LibeSpecs, AllocSpecs, ExitCriteria
+    from libensemble import Ensemble
+    legacy_mode = False
+except ImportError:
+    from libensemble.libE import libE
+    legacy_mode = True
 from libensemble.alloc_funcs.start_only_persistent import only_persistent_gens as alloc_f
 from libensemble.tools import parse_args, save_libE_output, add_unique_random_streams
 from libensemble import logger
@@ -331,9 +337,18 @@ def manager_save(H, gen_specs, libE_specs):
     print(f"All manager-finished results logged to {output}")
 
 if __name__ == '__main__':
-    # Perform the libE run
-    H, persis_info, flag = libE(sim_specs, gen_specs, exit_criteria, persis_info,
-                                alloc_specs=alloc_specs, libE_specs=libE_specs)
+    if legacy_mode:
+        # Perform the libE run
+        H, persis_info, flag = libE(sim_specs, gen_specs, exit_criteria, persis_info,
+                                    alloc_specs=alloc_specs, libE_specs=libE_specs)
+    else:
+        # We can separate experiment creation from running, which can allow an exit trap
+        # to capture more results during shutdown
+        experiment = Ensemble(sim_specs=sim_specs, gen_specs=gen_specs, alloc_specs=alloc_specs,
+                              exit_criteria=exit_criteria, persis_info=persis_info,
+                              libE_specs=libE_specs)
+        H, persis_info, flag = experiment.run()
+
     # Save History array to file
     if is_manager:
         # We may have missed the final evaluation in the results file

@@ -3,6 +3,7 @@ import argparse
 import os, pathlib, stat, shutil
 import secrets
 import warnings
+import signal
 
 def build():
     parser = argparse.ArgumentParser()
@@ -224,6 +225,51 @@ def sed_error(sed_command, sed_arg, target_file):
     SedSubstitutionFailure = f"Substitution '{sed_arg}' in '{target_file}' failed"
     raise ValueError(SedSubstitutionFailure)
 
+args, ensemble_operating_dir, proc = None, None, None
+def cleanup(signum=None, frame=None):
+    migrations = [(args.ens_script_export, ensemble_operating_dir.joinpath(args.ens_script_export), "Job script"),
+                  (args.ens_template_export, ensemble_operating_dir.joinpath(args.ens_template_export), "LibEnsemble driver"),
+                  ('ensemble.log', ensemble_operating_dir.joinpath("ensemble.log"), "Ensemble logs"),
+                  ('ytopt.log', ensemble_operating_dir.joinpath("ytopt.log"), "Ytopt logs"),]
+    curdir = pathlib.Path('.')
+    stats = [_ for _ in curdir.glob('libE_stats.txt')]
+    migrations += [(s.name, ensemble_operating_dir.joinpath(s.name), "LibE stats") for s in stats]
+    # Aborted by signal
+    if signum is not None:
+        import time
+        # The files may need a second to appear. This doesn't always work but we can't wait forever
+        time.sleep(1)
+        # Try to find the abort files and add them to migration list
+        history = [_ for _ in curdir.glob('libE_history_at_abort_*.npy')]
+        migrations += [(h.name, ensemble_operating_dir.joinpath(h.name), "LibE aborted history") for h in history]
+        persis = [_ for _ in curdir.glob('libE_persis_info_at_abort_*.pickle')]
+        migrations == [(p.name, ensemble_operating_dir.joinpath(p.name), "LibE aborted persis") for p in persis]
+    for migration_from, migration_to, identifier in migrations:
+        try:
+            shutil.move(migration_from, migration_to)
+        except:
+            print(f"{identifier} could not be migrated <-- {migration_from}")
+        else:
+            print(f"{identifier} migrated --> {migration_to}")
+    if proc.returncode == 0 and args.display_results:
+        import pandas as pd
+        try:
+            finished = pd.read_csv(f"{ensemble_operating_dir}/manager_results.csv")
+        except FileNotFoundError:
+            print("Manager Results unavailable")
+        else:
+            print("Finished evaluations")
+            print(finished)
+        try:
+            unfinished = pd.read_csv(f"{ensemble_operating_dir}/unfinished_results.csv")
+        except FileNotFoundError:
+            print("No unfinished evaluations to view")
+        else:
+            print("Unfinished evaluations")
+            print(unfinished)
+signal.signal(signal.SIGTERM, cleanup)
+signal.signal(signal.SIGINT, cleanup)
+
 if __name__ == '__main__':
     args = parse()
     # Copy files
@@ -332,25 +378,10 @@ echo;
     print("Script written")
     ensemble_operating_dir = pathlib.Path(f"./ensemble_{args.ens_dir_path[1:-1]}")
     if args.launch_job:
-        proc = subprocess.run(f"./{args.ens_script_export}")
-        migrations = [(args.ens_script_export, ensemble_operating_dir.joinpath(args.ens_script_export), "Job script"),
-                      (args.ens_template_export, ensemble_operating_dir.joinpath(args.ens_template_export), "LibEnsemble driver"),
-                      ('ensemble.log', ensemble_operating_dir.joinpath("ensemble.log"), "Ensemble logs"),
-                      ('ytopt.log', ensemble_operating_dir.joinpath("ytopt.log"), "Ytopt logs"),]
-        for migration_from, migration_to, identifier in migrations:
-            try:
-                shutil.move(migration_from, migration_to)
-            except:
-                print(f"{identifier} could not be migrated <-- {migration_from}")
-            else:
-                print(f"{identifier} migrated --> {migration_to}")
-        if proc.returncode == 0 and args.display_results:
-            import pandas as pd
-            print("Finished evaluations")
-            print(pd.read_csv(f"{ensemble_operating_dir}/manager_results.csv"))
-            try:
-                print("Unfinished evaluations")
-                print(pd.read_csv(f"{ensemble_operating_dir}/unfinished_results.csv"))
-            except:
-                print("No unfinished evaluations to view")
+        try:
+            proc = subprocess.run(f"./{args.ens_script_export}")
+        except KeyboardInterrupt:
+            cleanup(signum=signal.SIGINT)
+        else:
+            cleanup()
 
