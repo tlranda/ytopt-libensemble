@@ -232,7 +232,7 @@ constraints = [{'constraint_class': 'ScalarRange', # App scale limit
 # Fetch problem instance and set its space based on alterations
 import gc_tla_problem
 app_scale_name = gc_tla_problem.lookup_ival[(NODE_COUNT, APP_SCALE)]
-warnings.simplefilter('ignore') # I want the plopper to raise this warning, but I know about it and will properly handle it. No need to hear about the warning
+warnings.simplefilter('ignore') # I want the problem class to raise this warning, but I know about it and will properly handle it. No need to hear about the warning
 problem = getattr(gc_tla_problem, app_scale_name) #f"{app_scale_name}_{NODE_COUNT}")
 warnings.simplefilter('default')
 problem.plopper.set_architecture_info(threads_per_node = ranks_per_node,
@@ -266,6 +266,8 @@ mass_condition[0].num_rows = possible_configurations
 # Load data
 if 'ignore' not in user_args.keys() or user_args['ignore'] is None or len(user_args['ignore']) == 0:
     user_args['ignore'] = []
+if type(user_args['input']) is str:
+    user_args['input'] = [user_args['input']]
 data_files = [_ for _ in user_args['input'] if _ not in user_args['ignore']]
 print(f"GC will be fitted against data from: {data_files}")
 data = pd.concat([pd.read_csv(_) for _ in data_files])

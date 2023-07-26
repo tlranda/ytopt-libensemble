@@ -32,6 +32,8 @@ def build():
                        help="Template for job submission script that calls libEnsemble driver (default: %(default)s)")
     files.add_argument("--ens-static", action='store_true',
                        help="Override templates rather than copying to unique name (default: Vary name to prevent multi-job clobbering)")
+    files.add_argument("--resume", nargs="*", default=None,
+                       help="CSV files to treat as prior history without re-evaluating on the system (default: none -- only operable for --ens-template=run_ytopt.py)")
     # SEEDS
     seeds = parser.add_argument_group("Seeds", "Arguments that control randomization seeding")
     seeds.add_argument("--seed-configspace", type=int, default=1234,
@@ -101,7 +103,7 @@ def parse(prs=None, args=None):
     if args is None:
         args = prs.parse_args()
     # Quote the ensemble dir name and add randomization
-    if args.ens_dir_path is not None:
+    if args.ens_dir_path is None:
         args.ens_dir_path = ''
     if not args.ens_static_path:
         dpath = pathlib.Path(args.ens_dir_path)
@@ -116,6 +118,8 @@ def parse(prs=None, args=None):
         args.ens_template_export = template.parent.joinpath(template.stem + '_' + secrets.token_hex(nbytes=4) + template.suffix)
         script = pathlib.Path(args.ens_script_export)
         args.ens_script_export = script.parent.joinpath(script.stem + '_' + secrets.token_hex(nbytes=4) + script.suffix)
+    if type(args.resume) is str:
+        args.resume = [args.resume]
 
     # Environments
     if args.configure_environment is None:
@@ -162,12 +166,15 @@ def parse(prs=None, args=None):
     if type(args.gc_ignore) is str:
         args.gc_ignore = [args.gc_ignore]
     # Join to string because this is a command line argument and can't obey normal python __str__ semantics for lists
-    if type(args.gc_ignore) is not None:
+    if args.gc_ignore is not None:
         args.gc_ignore = " ".join(args.gc_ignore)
-    # Provide runtime args to run_gctla.py as needed / defined
+    # Provide runtime args to tempaltes as needed / defined
+    args.bonus_runtime_args = ""
+    if args.resume is not None:
+        args.bonus_runtime_args += f" --resume {' '.join(args.resume)}"
     if 'gc' in args.ens_template_export.stem:
         try:
-            args.bonus_runtime_args = f"--constraint-sys {args.gc_sys} --constraint-app {args.gc_app} --input {' '.join(args.gc_input)} --auto-budget={args.gc_auto_budget}"
+            args.bonus_runtime_args += f" --constraint-sys {args.gc_sys} --constraint-app {args.gc_app} --input {' '.join(args.gc_input)} --auto-budget={args.gc_auto_budget}"
             # These can be set for any GC run
             gc_args = ['gc_ignore',]
             target_args = ['--ignore',]
@@ -189,8 +196,6 @@ def parse(prs=None, args=None):
                         args.bonus_runtime_args += f" {bonusargname} {local_arg}"
         except TypeError: # args.gc_input is Nonetype, cannot be iterated
             raise ValueError(f"Must supply --gc-input arguments to run Gaussian Copula")
-    else:
-        args.bonus_runtime_args = ""
 
     # Set up `sed` arguments
     # Key: Tuple of args attribute names (in order) to use to fill template string values
@@ -325,16 +330,13 @@ echo;
                                      stat.S_IRGRP | stat.S_IXGRP |
                                      stat.S_IROTH | stat.S_IXOTH)
     print("Script written")
-    ensemble_operating_dir = f"./ensemble_{args.ens_dir_path[1:-1]}"
+    ensemble_operating_dir = pathlib.Path(f"./ensemble_{args.ens_dir_path[1:-1]}")
     if args.launch_job:
         proc = subprocess.run(f"./{args.ens_script_export}")
         migrations = [(args.ens_script_export, ensemble_operating_dir.joinpath(args.ens_script_export), "Job script"),
                       (args.ens_template_export, ensemble_operating_dir.joinpath(args.ens_template_export), "LibEnsemble driver"),
                       ('ensemble.log', ensemble_operating_dir.joinpath("ensemble.log"), "Ensemble logs"),
                       ('ytopt.log', ensemble_operating_dir.joinpath("ytopt.log"), "Ytopt logs"),]
-        # If the target was modified in-place, do NOT move it
-        if args.libensemble_target != args.libensemble_export:
-            migrations.append((args.libensemble_export, f"{ensemble_operating_dir}/{args.libensemble_export}", "LibEnsemble script"))
         for migration_from, migration_to, identifier in migrations:
             try:
                 shutil.move(migration_from, migration_to)

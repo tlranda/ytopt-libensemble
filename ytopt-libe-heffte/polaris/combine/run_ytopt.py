@@ -35,6 +35,8 @@ import ConfigSpace.hyperparameters as CSH
 from ConfigSpace import ConfigurationSpace, EqualsCondition
 from ytopt.search.optimizer import Optimizer
 
+import pandas as pd
+
 # Parse comms, default options from commandline
 nworkers, is_manager, libE_specs, user_args_in = parse_args()
 num_sim_workers = nworkers - 1  # Subtracting one because one worker will be the generator
@@ -67,7 +69,8 @@ assert all([opt in user_args for opt in req_settings]), \
 int_args = ['max-evals', ]
 for arg in int_args:
     user_args[arg] = int(user_args[arg])
-
+if 'resume' in user_args and type(user_args['resume']) is str:
+    user_args['resume'] = [user_args['resume']]
 
 # Variables that will be sed-edited to control scaling
 APP_SCALE = 256
@@ -172,6 +175,54 @@ ytoptimizer = Optimizer(
     set_SEED = YTOPT_SEED,
     set_NI = 10,
 )
+
+# We may be resuming a previous iteration. LibEnsemble won't let the directory be resumed, so
+# results will have to be merged AFTER the fact (probably by libEwrapper.py). To support this
+# behavior, we only interact with the Optimizer here for run_ytopt.py, so only the Optimizer
+# needs to be lied to in order to simulate the past evaluations
+if 'resume' in user_args:
+    resume_from = [_ for _ in user_args['resume']]
+    print(f"Resuming from records indicated in files: {resume_from}")
+    previous_records = pd.concat([pd.read_csv(_) for _ in resume_from])
+    print(f"Loaded {len(previous_records)} previous evaluations")
+
+    # Form the fake records using optimizer's preferred lie
+    lie = ytoptimizer._get_lie()
+    param_cols = cs.get_hyperparameter_names()
+    result_col = 'FLOPS'
+
+    keylist, resultlist = [], []
+    for idx, row in previous_records.iterrows():
+        # I believe this is sufficient for heFFTe -- however in a conditional search space with
+        # sometimes-deactivated parameters you may need to be more careful.
+        # ytoptimizer.make_key() will help but only if the records indicate nan-values appropriately
+        key = ytoptimizer.make_key(row[param_cols].to_list())
+        if key not in ytoptimizer.evals:
+            # Stage the result of asking for the key
+            ytoptimizer.evals[key] = lie
+            # Prepare lie material and the actual results to tell back
+            keylist.append(key)
+            keydict = dict((k,v) for (k,v) in zip(param_cols, key))
+            result = row[result_col]
+            resultlist.append(tuple([keydict, result]))
+    n_prepared = len(keylist)
+    print(f"Prepared {n_prepared} prior evaluations")
+    # Now that side affects are in place, commit the actual lies
+    # We also guarantee underlying optimizers are forced to fit by setting NI / _n_initial_points = 0
+    # This means that future ask()'s will not be random and will be based on a model fitted to available data
+    ytoptimizer.NI = ytoptimizer._optimizer._n_initial_points = 0
+    ytoptimizer.counter += n_prepared
+    ytoptimizer._optimizer.tell(keylist, [lie] * n_prepared)
+    # Update the lies and trigger underlying optimizer to refit
+    ytoptimizer.tell(resultlist)
+    old_max_evals = user_args['max-evals']
+    user_args['max-evals'] -= n_prepared
+    # When resuming, we never want to actually use ask_initial() so have that function point to ask()
+    def wrap_initial(n_points=1):
+        points = ytoptimizer.ask(n_points=n_points)
+        return list(points)[0]
+    ytoptimizer.ask_initial = wrap_initial
+    print(f"Optimizer updated and ready to resume -- max-evals reduced {old_max_evals} --> {user_args['max-evals']}")
 
 MACHINE_IDENTIFIER = "tbd"
 print(f"Identifying machine as {MACHINE_IDENTIFIER}"+"\n")
