@@ -359,16 +359,22 @@ def remove_generated_duplicates(samples, history, dtypes):
     # Duplicate checking and selection
     casted.insert(0, 'source', ['cast'] * len(casted))
     if len(history) > 0:
-        combined = pd.concat((history, casted)).reset_index(drop=True)
+        combined = pd.concat((history, casted)).reset_index(drop=False)
     else:
-        combined = casted
+        combined = casted.reset_index(drop=False)
     match_on = list(set(combined.columns).difference(set(['source'])))
     duplicated = np.where(combined.duplicated(subset=match_on))[0]
+    sample_idx = combined.loc[duplicated]['index']
     combined = combined.drop(index=duplicated)
+    if len(duplicated) > 0:
+        print(f"Dropping {len(duplicated)} duplicates from generation")
+    else:
+        print("No duplicates to remove")
     # Extract non-duplicated samples and ensure history is ready for future iterations
-    samples = combined[combined['source'] == 'cast']
-    samples = samples.drop(columns=['source'])
-    combined['source'] = ['history'] * len(history)
+    samples.drop(index=sample_idx)
+    combined['source'] = ['history'] * len(combined)
+    if 'index' in combined.columns:
+        combined = combined.drop(columns=['index'])
     return samples, combined
 
 # We do this to ensure each problem can be referenced with a separate plopper that separately
