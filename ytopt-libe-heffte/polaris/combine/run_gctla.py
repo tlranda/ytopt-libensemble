@@ -243,6 +243,7 @@ problem.plopper.set_architecture_info(threads_per_node = ranks_per_node,
                                       )
 problem.set_space(cs)
 
+
 # Fetch the floatcasting function for GC fitting
 topology_cache = problem.plopper.topology_cache
 floatcast_fn = problem.plopper.floatcast
@@ -352,6 +353,24 @@ if accepted_model is not None:
 if 'determine-budget-only' in user_args and user_args['determine-budget-only']:
     exit()
 
+def remove_generated_duplicates(samples, history, dtypes):
+    default_machine_info = {'sequence': sequence}
+    casted = problem.plopper.floatcast(samples, default_machine_info)
+    # Duplicate checking and selection
+    casted.insert(0, 'source', ['cast'] * len(casted))
+    if len(history) > 0:
+        combined = pd.concat((history, casted)).reset_index(drop=True)
+    else:
+        combined = casted
+    match_on = list(set(combined.columns).difference(set(['source'])))
+    duplicated = np.where(combined.duplicated(subset=match_on))[0]
+    combined = combined.drop(index=duplicated)
+    # Extract non-duplicated samples and ensure history is ready for future iterations
+    samples = combined[combined['source'] == 'cast']
+    samples = samples.drop(columns=['source'])
+    combined['source'] = ['history'] * len(history)
+    return samples, combined
+
 # We do this to ensure each problem can be referenced with a separate plopper that separately
 # points to its own tmp_file directory much like the ytopt version, but this doesn't require
 # me to re-initialize the object for every single iteration
@@ -411,6 +430,7 @@ gen_specs = {
     'user': {
         'machine_info': MACHINE_INFO,
         'model': model, # provide generation object
+        'remove_duplicates': remove_generated_duplicates,
         # Arguments to generation
         'conditions': conditions,
         'num_sim_workers': num_sim_workers,
