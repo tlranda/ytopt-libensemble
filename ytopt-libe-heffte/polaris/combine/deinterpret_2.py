@@ -26,7 +26,7 @@ class TopologyCache(UserDict):
             if np.prod(candidate) != budget or \
                np.any([tuple([candidate[_] for _ in order]) in topology for order in self.candidate_orders]):
                 continue
-            topology.append(candidate)
+            topology.append(' '.join([str(_) for _ in candidate]))
         # Add the null space
         topology += [' ']
         return topology
@@ -58,13 +58,11 @@ def parse(args=None, prs=None):
         args.save = [None] * len(args.csv)
     return args
 
-def deinterpret(csvs, args):
+def deinterpret(csvs, names, args):
     param_cols = [f'p{_}' for _ in range(10)] + ['c0']
     topCache = TopologyCache()
     top_keymap = {'P7': '-ingrid', 'P8': '-outgrid'}
-    import pdb
-    pdb.set_trace()
-    for (csv, save) in zip(csvs, args.save):
+    for (csv, name, save) in zip(csvs, names, args.save):
         original_len = len(csv)
         # Reconstruct architecture info from records
         TPN = list(set(csv['threads_per_node']))[0]
@@ -85,7 +83,7 @@ def deinterpret(csvs, args):
             sequence = sorted(sequence+[max_depth])
 
         # De-interpret the topology
-        altered_topologies = np.empty((original_len, len(top_keymap.keys())), dtype=int)
+        altered_topologies = np.empty((original_len, len(top_keymap.keys())), dtype=object)
         altered_sequence = np.empty((original_len, 1), dtype=int)
         sequence = np.asarray(sequence)
 
@@ -101,9 +99,8 @@ def deinterpret(csvs, args):
         for (gidx, group) in csv.groupby('mpi_ranks'):
             budget = group.loc[group.index[0], 'mpi_ranks']
             # Topology
-            topology = topCache[budget]
+            topology = np.asarray(topCache[budget], dtype=object)
             # Topology must be differentiably cast, but doesn't need to be representative per se
-            topology = np.arange(len(topology))
             for tidx, topology_key in enumerate(topkeys):
                 # Initial selection followed by boundary fixing, then substitute from array
                 # Gaussian Copula CAN over/undersample, so you have to fix that too
@@ -118,12 +115,11 @@ def deinterpret(csvs, args):
         # Substitute values and return
         for key, replacement in zip(topkeys+[p9_key],
                                     np.hsplit(altered_topologies, altered_topologies.shape[1])+[altered_sequence]):
-            if key in topkeys:
-                replacement = f"{top_keymap[key.upper()]} {' '.join([str(_) for _ in replacement])}"
             csv[key] = replacement
         if args.count_collisions:
-            print(f"Collions: {original_len} --> {len(csv.drop_duplicates(subset=param_cols))}")
+            print(f"{name} Collions: {original_len} --> {len(csv.drop_duplicates(subset=param_cols))}")
         if args.show:
+            print(name)
             print(csv)
         if save is not None:
             csv.to_csv(save, index=False)
@@ -131,12 +127,14 @@ def deinterpret(csvs, args):
 def main(args=None):
     args = parse(args)
     csvs = []
+    names = []
     for name in args.csv:
         try:
             csvs.append(pd.read_csv(name))
+            names.append(name)
         except:
             print(f"Unable to load csv '{name}'")
-    deinterpret(csvs, args)
+    deinterpret(csvs, names, args)
 
 if __name__ == '__main__':
     main()
