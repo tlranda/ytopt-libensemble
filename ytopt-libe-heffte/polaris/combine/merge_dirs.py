@@ -1,10 +1,12 @@
 import argparse
 import pathlib
+import pandas as pd
+import numpy as np
 
 def build():
     prs = argparse.ArgumentParser()
-    prs.parse_args('--merge-from', '--from', nargs='+', default=None, help="Directories to grab results from")
-    prs.parse_args('--merge-to', '--to', nargs='+', default=None, help="Directories to place results in (must be ONE or same number of arguments as --merge-from)")
+    prs.add_argument('--merge-from', '--from', nargs='+', default=None, help="Directories to grab results from")
+    prs.add_argument('--merge-to', '--to', nargs='+', default=None, help="Directories to place results in (must be ONE or same number of arguments as --merge-from)")
     return prs
 
 def parse(args=None, prs=None):
@@ -12,11 +14,13 @@ def parse(args=None, prs=None):
         prs = build()
     if args is None:
         args = prs.parse_args()
+
     # Fix argparse not treating nargs well
     for name in ['merge_from', 'merge_to']:
         local = getattr(args, name)
         if type(local) is str:
             setattr(args, name, [local])
+
     # Validate merging pattern
     if len(args.merge_to) == 1:
         args.merge_to = args.merge_to * len(args.merge_from)
@@ -31,21 +35,49 @@ def merge(_from, _to):
 
     # Direct copy without clobbering
     migrations = [fromdir.joinpath('ytopt.log'),
-                  fromdir.joinpath('ensemble.log'),
-                  fromdir.glob('qsub_*.batch'),
-                  fromdir.glob('run_*.py'),
-                 ]
+                  fromdir.joinpath('ensemble.log'), ]
+
+    # Filter out things that do not exist
+    migrations = [_ for _ in migrations if _.exists()]
+    migrations.extend([_ for _ in fromdir.glob('qsub*.batch')])
+    migrations.extend([_ for _ in fromdir.glob('run*.py')])
     for workerdir in fromdir.glob('worker*'):
-        migrations.extend(fromdir.joinpath(workerdir).joinpath('tmp_files').glob('*.sh'))
-        migrations.extend(fromdir.joinpath(workerdir).joinpath('tmp_files').glob('*.log'))
+        globbed = [_ for _ in workerdir.joinpath('tmp_files').glob('*.sh')]
+        migrations.extend(globbed)
+        globbed = [_ for _ in workerdir.joinpath('tmp_files').glob('*.log')]
+        migrations.extend(globbed)
+
+    # Create directories to migrate
+    todir.mkdir(parents=True, exist_ok=True)
+    directories = set([todir.joinpath(*_.parts[1:-1]) for _ in migrations])
+    for directory in directories:
+        directory.mkdir(parents=True, exist_ok=True)
     for migrate_from in migrations:
-        migrate(migrate_from, todir)
+        migrate_from.rename(todir.joinpath(pathlib.Path(*migrate_from.parts[1:])))
+
     # Actually combine files
-    merges = [((_dir.joinpath('full_H_array.npz'), *_dir.glob('libE_history_at_abort_*.npy')) for _dir in [fromdir, todir]),
-              ((_dir.joinpath('manager_results.csv'), _dir.joinpath('results.csv')) for _dir in [fromdir, todir]),
-             ]
-    for merge_from_options, merge_to_options in merges:
-        combine(merge_from_options, merge_to_options)
+    import pdb
+    pdb.set_trace()
+    numpy_files = []
+    for _dir in [fromdir, todir]:
+        full = _dir.joinpath('full_H_array.npz')
+        if full.exists():
+            numpy_files.append(full)
+        numpy_files.extend([_ for _ in _dir.glob('libE_history_at_abort_*.npy')])
+    print(numpy_files)
+
+    csv_files = {}
+    for _dir in [fromdir, todir]:
+        available_csvs = [_ for _ in _dir.glob('*results.csv')]
+        unique_stems = set([_.stem for _ in available_csvs])
+        for stem in unique_stems:
+            if stem not in csv_files.keys():
+                csv_files[stem] = []
+        for csv in available_csvs:
+            csv_files[csv.stem].append(csv)
+    for stem in in csv_files.keys():
+        loaded = pd.concat([pd.read_csv(_) for _ in csv_files[stem]])
+        loaded.to_csv(todir.joinpath(stem+'.csv'), index=False)
 
 def main(args=None):
     args = parse(args)
