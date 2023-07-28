@@ -56,15 +56,24 @@ def merge(_from, _to):
         migrate_from.rename(todir.joinpath(pathlib.Path(*migrate_from.parts[1:])))
 
     # Actually combine files
-    import pdb
-    pdb.set_trace()
     numpy_files = []
     for _dir in [fromdir, todir]:
         full = _dir.joinpath('full_H_array.npz')
         if full.exists():
-            numpy_files.append(full)
-        numpy_files.extend([_ for _ in _dir.glob('libE_history_at_abort_*.npy')])
-    print(numpy_files)
+            with open(full, 'rb') as f:
+            numpy_files.append(np.load(f))
+        for _ in _dir.glob('libE_history_at_abort_*.npy'):
+            with open(_, 'rb') as f:
+                numpy_files.append(np.load(f))
+    if len(numpy_files) > 0:
+        np_dtype = numpy_files[0].dtype.descr
+        indices = [len(_) for _ in numpy_files]
+        combined = np.empty(sum(indices), dtype=np_dtype)
+        # The only column that doesn't really work to naively combine is sim_id, but that's ok to duplicate
+        for idx, npf in enumerate(numpy_files):
+            for name in np_dtype.names:
+                combined[name][sum(indices[:idx]):] = npf[name]
+        combined.save(todir.joinpath('combined.npz'))
 
     csv_files = {}
     for _dir in [fromdir, todir]:
