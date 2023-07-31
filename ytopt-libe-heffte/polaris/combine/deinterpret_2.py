@@ -27,7 +27,9 @@ class TopologyCache(UserDict):
             if np.prod(candidate) != budget or \
                np.any([tuple([candidate[_] for _ in order]) in topology for order in self.candidate_orders]):
                 continue
-            topology.append(' '.join([str(_) for _ in candidate]))
+            topology.append(candidate)
+        # Convert topologies to strings
+        topology = [' '.join([str(_) for _ in candidate]) for candidate in topology]
         # Add the null space
         topology += [' ']
         return topology
@@ -40,6 +42,7 @@ def build():
     prs.add_argument('--csv', nargs="+", default=None, help="CSVs to de-interpret")
     prs.add_argument('--count-collisions', action='store_true', help="Determine number of identical records post-interpretation")
     prs.add_argument('--show', action='store_true', help="Print de-interpreted CSv")
+    prs.add_argument('--enumerate', action='store_true', help="Count number of times each option represented in a CSV column appears")
     prs.add_argument('--save', nargs="+", default=None, help="Save each input CSV to a name (must be 1:1 with # of args to --csv)")
     prs.add_argument('--auto', default=None, help="Automatic renaming for CSV saving (not used by default; this suffix is added to filenames before the extension)")
     prs.add_argument('--def-threads-per-node', default=None, type=int, help="Provide default number of threads per node if not present in CSV")
@@ -145,6 +148,16 @@ def deinterpret(csvs, names, args):
             print(csv)
         if save is not None:
             csv.to_csv(save, index=False)
+        if args.enumerate:
+            import pprint
+            for col in csv.columns:
+                # Sort based on count descending
+                options = np.asarray(sorted(set(csv[col])))
+                counts = np.asarray([csv[col].to_list().count(k) for k in options])
+                sort = np.argsort(-counts)
+                col_dict = dict((k, c) for (k, c) in zip(options[sort], counts[sort]))
+                #col_dict = dict((k,csv[col].to_list().count(k)) for k in sorted(set(csv[col])))
+                pprint.pprint({col: col_dict}, sort_dicts=False)
 
 def main(args=None):
     args = parse(args)
