@@ -9,7 +9,7 @@ Execute locally via one of the following commands (e.g. 3 workers):
 The number of concurrent evaluations of the objective function will be 4-1=3.
 """
 
-import os
+import os, pathlib
 import glob
 import numpy as np
 NUMPY_SEED = 1
@@ -87,7 +87,8 @@ arg_casts = [('max-evals', True, int),
              ('quantile-reduction', False, float),
              ('ideal-proportion', False, float),
              ('ideal-attrition', False, float),
-             ('determine-budget-only', False, boolcast),]
+             ('determine-budget-only', False, boolcast),
+             ('predictions-only', False, boolcast),]
 for (arg_name, required, cast_type) in arg_casts:
     if required or arg_name in user_args:
         user_args[arg_name] = cast_type(user_args[arg_name])
@@ -453,6 +454,14 @@ exit_criteria = {'sim_max': int(user_args['max-evals'])}
 
 # Added as a workaround to issue that's been resolved on develop
 persis_info = add_unique_random_streams({}, nworkers + 1)
+
+if 'predictions-only' in user_args and user_args['predictions-only']:
+    raw_predictions = model.sample_from_conditions(conditions)
+    cleaned, history = remove_generated_duplicates(raw_predictions, [], gen_specs['out'])
+    outdir = pathlib.Path(libE_specs['ensemble_dir_path'])
+    outdir.mkdir(parents=True, exist_ok=True)
+    cleaned.to_csv(outdir.joinpath('predicted_results.csv'), index=False)
+    exit()
 
 def manager_save(H, gen_specs, libE_specs):
     import pandas as pd

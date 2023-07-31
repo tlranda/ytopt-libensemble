@@ -34,7 +34,7 @@ def build():
     files.add_argument("--ens-static", action='store_true',
                        help="Override templates rather than copying to unique name (default: Vary name to prevent multi-job clobbering)")
     files.add_argument("--resume", nargs="*", default=None,
-                       help="CSV files to treat as prior history without re-evaluating on the system (default: none -- only operable for --ens-template=run_ytopt.py)")
+                       help="CSV files to treat as prior history without re-evaluating on the system (default: none; only operable for --ens-template=run_ytopt.py)")
     # SEEDS
     seeds = parser.add_argument_group("Seeds", "Arguments that control randomization seeding")
     seeds.add_argument("--seed-configspace", type=int, default=1234,
@@ -76,9 +76,9 @@ def build():
     gc.add_argument("--gc-app", type=int, default=None,
                     help="Application size targeted by constrained GC (default: Defers to --application-scale)")
     gc.add_argument("--gc-input", nargs="+", default=None,
-                    help="Inputs to provide to the GC (no default -- must be specified!)")
+                    help="Inputs to provide to the GC (no default; must be specified!)")
     gc.add_argument("--gc-ignore", nargs="*", default=None,
-                    help="Ignore list for the input list (helpful for over-eager globbing -- no default)")
+                    help="Ignore list for the input list (helpful for over-eager globbing; no default)")
     gc.add_argument("--gc-auto-budget", action='store_true',
                     help="Utilize auto-budgeting in libensemble-target (default: not used)")
     gc.add_argument("--gc-determine-budget-only", action='store_true',
@@ -94,7 +94,9 @@ def build():
     gc.add_argument("--gc-ideal-proportion", type=float, default=None,
                     help="Ideal proportion of search space to target in auto-budgeting (default: libensemble-target's default)")
     gc.add_argument("--gc-ideal-attrition", type=float, default=None,
-                    help="Attrition rate from ideal portion after the GC constrains the space (default: libensemble-target's default")
+                    help="Attrition rate from ideal portion after the GC constrains the space (default: libensemble-target's default)")
+    gc.add_argument("--gc-predictions-only", action='store_true',
+                    help="GC only produces predictions (default: empirically evaluate predictions for TL autotuning)")
     return parser
 
 def parse(prs=None, args=None):
@@ -177,20 +179,18 @@ def parse(prs=None, args=None):
         try:
             args.bonus_runtime_args += f" --constraint-sys {args.gc_sys} --constraint-app {args.gc_app} --input {' '.join(args.gc_input)} --auto-budget={args.gc_auto_budget}"
             # These can be set for any GC run
-            gc_args = ['gc_ignore',]
-            target_args = ['--ignore',]
+            gc_args = ['gc_ignore', 'gc_predictions_only', 'gc_initial_quantile', ]
+            target_args = ['--ignore', '--predictions-only', '--initial-quantile', ]
             for argname, bonusargname in zip(gc_args, target_args):
                 local_arg = getattr(args, argname)
                 if local_arg is not None:
                     args.bonus_runtime_args += f" {bonusargname} {local_arg}"
             # These are only set when auto-budgeting is enabled
             if args.gc_auto_budget:
-                autobudget_args = ['gc_initial_quantile', 'gc_min_quantile', 'gc_budget_confidence',
-                                   'gc_quantile_reduction', 'gc_ideal_proportion', 'gc_ideal_attrition',
-                                   'gc_determine_budget_only', ]
-                target_autobudget = ['--initial-quantile', '--min-quantile', '--budget-confidence',
-                                     '--quantile-reduction', '--ideal-proportion', '--ideal-attrition',
-                                     '--determine-budget-only', ]
+                autobudget_args = ['gc_min_quantile', 'gc_budget_confidence', 'gc_quantile_reduction',
+                                   'gc_ideal_proportion', 'gc_ideal_attrition', 'gc_determine_budget_only', ]
+                target_autobudget = ['--min-quantile', '--budget-confidence', '--quantile-reduction',
+                                     '--ideal-proportion', '--ideal-attrition', '--determine-budget-only', ]
                 for argname, bonusargname in zip(autobudget_args, target_autobudget):
                     local_arg = getattr(args, argname)
                     if local_arg is not None:
