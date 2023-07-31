@@ -1,6 +1,7 @@
 import pandas as pd, numpy as np
 from collections import UserDict
 import itertools
+import pathlib
 import argparse
 
 class TopologyCache(UserDict):
@@ -40,6 +41,7 @@ def build():
     prs.add_argument('--count-collisions', action='store_true', help="Determine number of identical records post-interpretation")
     prs.add_argument('--show', action='store_true', help="Print de-interpreted CSv")
     prs.add_argument('--save', nargs="+", default=None, help="Save each input CSV to a name (must be 1:1 with # of args to --csv)")
+    prs.add_argument('--auto', default=None, help="Automatic renaming for CSV saving (not used by default; this suffix is added to filenames before the extension)")
     prs.add_argument('--def-threads-per-node', default=None, type=int, help="Provide default number of threads per node if not present in CSV")
     prs.add_argument('--def-ranks-per-node', default=None, type=int, help="Provide default number of ranks per node if not present in CSV")
     return prs
@@ -49,6 +51,12 @@ def parse(args=None, prs=None):
         prs = build()
     if args is None:
         args = prs.parse_args()
+    # Autosave names
+    if args.auto is not None:
+        args.save = []
+        for name in args.csv:
+            p = pathlib.Path(name)
+            args.save.append(p.with_stem(p.stem+args.auto))
     # List-ify if only one argument is present
     for name in ['csv', 'save']:
         local = getattr(args, name)
