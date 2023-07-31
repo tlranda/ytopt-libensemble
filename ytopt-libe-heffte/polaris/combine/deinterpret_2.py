@@ -40,6 +40,8 @@ def build():
     prs.add_argument('--count-collisions', action='store_true', help="Determine number of identical records post-interpretation")
     prs.add_argument('--show', action='store_true', help="Print de-interpreted CSv")
     prs.add_argument('--save', nargs="+", default=None, help="Save each input CSV to a name (must be 1:1 with # of args to --csv)")
+    prs.add_argument('--def-threads-per-node', default=None, type=int, help="Provide default number of threads per node if not present in CSV")
+    prs.add_argument('--def-ranks-per-node', default=None, type=int, help="Provide default number of ranks per node if not present in CSV")
     return prs
 
 def parse(args=None, prs=None):
@@ -65,8 +67,20 @@ def deinterpret(csvs, names, args):
     for (csv, name, save) in zip(csvs, names, args.save):
         original_len = len(csv)
         # Reconstruct architecture info from records
-        TPN = list(set(csv['threads_per_node']))[0]
-        RPN = list(set(csv['ranks_per_node']))[0]
+        try:
+            TPN = list(set(csv['threads_per_node']))[0]
+        except:
+            if hasattr(args, 'def_threads_per_node') and args.def_threads_per_node is not None:
+                TPN = args.def_threads_per_node
+            else:
+                raise
+        try:
+            RPN = list(set(csv['ranks_per_node']))[0]
+        except:
+            if hasattr(args, 'def_ranks_per_node') and args.def_ranks_per_node is not None:
+                RPN = args.def_ranks_per_node
+            else:
+                raise
         max_depth = TPN // RPN
         sequence = [2**_ for _ in range(1,10) if (2**_) <= max_depth]
         if len(sequence) >= 2:
