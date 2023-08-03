@@ -161,7 +161,7 @@ def log_moves(signum=None, frame=None):
     global args
     global change_record
     for todir in change_record.keys():
-        log = version(todir.joinpath('migration.log'))
+        log = version(todir.joinpath('migration_log.csv'))
         with open(log, 'w') as f:
             f.write("reason; destination_file; list_of_source_files\n")
             for record in change_record[todir]:
