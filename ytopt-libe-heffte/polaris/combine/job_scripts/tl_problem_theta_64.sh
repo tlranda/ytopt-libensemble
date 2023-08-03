@@ -31,7 +31,7 @@ while [[ ${#str_nodes} -lt 3 ]]; do # Must have this number equal number of plac
 done;
 for n_workers in ${workers[@]}; do
     echo "Calling on ${n_workers} workers with ${n_ranks} mpi ranks per worker for size ${app_scale}";
-    call="python libEwrapper.py --mpi-ranks ${n_ranks} --worker-timeout 300 --application-scale ${app_scale} --cpu-override 256 --cpu-ranks-per-node 64 --ensemble-workers ${n_workers} --max-evals 30 --configure-environment craympi --machine-identifier theta-knl --system theta --ens-dir-path Theta_TL_apps_${n_ranks}r_${app_scale}a --ens-template run_gctla.py --ens-script qsub_tl.batch --gc-input logs/ThetaSourceTasks/${str_nodes}n_*a/manager_results.csv --gc-ignore logs/ThetaSourceTasks/Theta_${str_nodes}n_${str_app}a/manager_results.csv --gc-initial-quantile 0.8 --launch-job --display-results";
+    call="python libEwrapper.py --mpi-ranks ${n_ranks} --worker-timeout 300 --application-scale ${app_scale} --cpu-override 256 --cpu-ranks-per-node 64 --ensemble-workers ${n_workers} --max-evals 30 --configure-environment craympi --machine-identifier theta-knl --system theta --ens-dir-path Theta_TL_apps_${n_ranks}r_${app_scale}a --ens-template run_gctla.py --ens-script qsub_tl.batch --gc-input logs/ThetaSourceTasks/*${str_nodes}n_*a/manager_results.csv --gc-ignore logs/ThetaSourceTasks/Theta_${str_nodes}n_${str_app}a/manager_results.csv --gc-initial-quantile 0.8 --launch-job --display-results";
     date;
     echo "${call}";
     eval "${call}";
