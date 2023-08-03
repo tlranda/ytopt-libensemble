@@ -1,7 +1,7 @@
 #!/bin/bash -x
 #COBALT -t 06:00:00
 #COBALT -n 257
-#COBALT --attrs filesystems=home,grand,eagle
+#COBALT --attrs filesystems=home
 #COBALT -A EE-ECP
 #COBALT -q default
 

@@ -1,7 +1,7 @@
 #!/bin/bash -x
 #PBS -l walltime=06:00:00
 #PBS -l select=65:system=polaris
-#PBS -l filesystems=home:grand:eagle
+#PBS -l filesystems=home
 #PBS -A EE-ECP
 #PBS -q prod
 
