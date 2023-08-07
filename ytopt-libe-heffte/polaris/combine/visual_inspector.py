@@ -10,10 +10,12 @@ import warnings
 def build(prs=None):
     if prs is None:
         prs = argparse.ArgumentParser()
-    prs.add_argument("--directory", nargs="*", help="Directories to directly include in results aggregration (default: None)")
-    prs.add_argument("--crawl-directory", nargs="*", help="Directories to crawl for subdirectory names (default: None)")
+    prs.add_argument("--directory", "--directories", nargs="*", help="Directories to directly include in results aggregration (default: None)")
+    prs.add_argument("--crawl-directory", "--crawl-directories", nargs="*", help="Directories to crawl for subdirectory names (default: None)")
     prs.add_argument("--highlight", type=int, default=-1, help="Focus results on the nth (0-indexed) directory (default: ALL directories)")
+    prs.add_argument("--quantile", type=float, nargs='*', default=0.5, help="Quantile to indicate (per directory, if more than one specified)")
     prs.add_argument("--timeout", type=float, default=20.0, help="Virtual timeout to include on graph (default: %(default)s)")
+    prs.add_argument("--drop-failures", action="store_true", help="Omit failures from the plot")
     prs.add_argument("--flops-only", action="store_true", help="Drop runtime from the plots")
     prs.add_argument("--stats", action="store_true", help="Calculate extended stats (text only)")
     prs.add_argument("--no-plots", action="store_true", help="Skip visuals")
@@ -33,7 +35,15 @@ def parse(prs=None, args=None):
                 args.directory.extend([name for name in found if os.path.isdir(os.path.join(dirname,name))])
     if args.highlight >= 0:
         args.directory = [args.directory[args.highlight]]
-    args.directory = sorted(args.directory)
+    if type(args.quantile) is float:
+        args.quantile = [args.quantile]
+    if len(args.quantile) < len(args.directory):
+        args.quantile += [args.quantile[-1]] * (len(args.directory) - len(args.quantile))
+    args.quantile = np.asarray(args.quantile)
+    args.directory = np.asarray(args.directory)
+    directory_sort = np.argsort(args.directory)
+    args.directory = args.directory[directory_sort]
+    args.quantile = args.quantile[directory_sort]
     return args
 
 def load(args):
@@ -71,6 +81,9 @@ def load(args):
         continuous_diff = [b-a for a,b in zip(continuous_diff[:-1], continuous_diff[1:])]
         frame.insert(0, 'elapsed_diff', elapsed_diff)
         frame.insert(0, 'continuous_diff', continuous_diff)
+        # Maybe we don't want failures
+        if args.drop_failures:
+            frame = frame.loc[frame['GFLOPS'] > 0.0]
         frames.append(frame)
         names.append(dirname.rstrip('/').split('/')[-1])
     return frames, names
@@ -130,11 +143,11 @@ def visualizations(frames, args):
         ax.hlines(args.timeout, xmin=0, xmax=max_frame_index)
 
     flines = []
-    for frame, color, name in zip(frames, matplotlib.colors.TABLEAU_COLORS, names):
+    for frame, color, name, idx in zip(frames, matplotlib.colors.TABLEAU_COLORS, names, np.arange(len(frames))):
         fline = sns.lineplot(frame, x='index', y='GFLOPS', estimator=None, marker='+', label=name,
                              color=color, markeredgecolor=color, linestyle='--', linewidth=1)
         if args.flops_only:
-            ax.hlines(frame['GFLOPS'].to_numpy().mean(), xmin=0, xmax=max_frame_index, color=color)
+            ax.hlines(frame['GFLOPS'].quantile(args.quantile[idx]), xmin=0, xmax=max_frame_index, color=color)
 
     leglines = [matplotlib.lines.Line2D([0],[0], color=c, linestyle='--', linewidth=1, marker='+', markeredgecolor=c)
                 for f,c in zip(frames, matplotlib.colors.TABLEAU_COLORS)]
@@ -147,7 +160,7 @@ def visualizations(frames, args):
         plt.show()
     else:
         print(f"Saving plot to {args.save}")
-        plt.savefig(args.save)
+        plt.savefig(args.save, dpi=400)
 
 
 if __name__ == '__main__':
