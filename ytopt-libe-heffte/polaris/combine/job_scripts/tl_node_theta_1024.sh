@@ -1,5 +1,5 @@
 #!/bin/bash -x
-#COBALT -t 09:00:00
+#COBALT -t 06:00:00
 #COBALT -n 513
 #COBALT --attrs filesystems=home
 #COBALT -A EE-ECP
