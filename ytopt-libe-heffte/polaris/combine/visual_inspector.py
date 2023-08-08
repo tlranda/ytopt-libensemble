@@ -13,13 +13,14 @@ def build(prs=None):
     prs.add_argument("--directory", "--directories", nargs="*", help="Directories to directly include in results aggregration (default: None)")
     prs.add_argument("--crawl-directory", "--crawl-directories", nargs="*", help="Directories to crawl for subdirectory names (default: None)")
     prs.add_argument("--highlight", type=int, default=-1, help="Focus results on the nth (0-indexed) directory (default: ALL directories)")
+    prs.add_argument("--save", default=None, help="Save figure rather than display (to this path, if given)")
     prs.add_argument("--quantile", type=float, nargs='*', default=0.5, help="Quantile to indicate (per directory, if more than one specified)")
     prs.add_argument("--timeout", type=float, default=20.0, help="Virtual timeout to include on graph (default: %(default)s)")
     prs.add_argument("--drop-failures", action="store_true", help="Omit failures from the plot")
     prs.add_argument("--flops-only", action="store_true", help="Drop runtime from the plots")
+    prs.add_argument("--monotonic", action="store_true", help="Reorder to have objective monotonically increasing")
     prs.add_argument("--stats", action="store_true", help="Calculate extended stats (text only)")
     prs.add_argument("--no-plots", action="store_true", help="Skip visuals")
-    prs.add_argument("--save", default=None, help="Save figure rather than display (to this path, if given)")
     return prs
 
 def parse(prs=None, args=None):
@@ -144,6 +145,9 @@ def visualizations(frames, args):
 
     flines = []
     for frame, color, name, idx in zip(frames, matplotlib.colors.TABLEAU_COLORS, names, np.arange(len(frames))):
+        if args.monotonic:
+            frame = frame.sort_values(by=['GFLOPS',]).reset_index(drop=True)
+            frame['index'] = frame.index
         fline = sns.lineplot(frame, x='index', y='GFLOPS', estimator=None, marker='+', label=name,
                              color=color, markeredgecolor=color, linestyle='--', linewidth=1)
         if args.flops_only:
