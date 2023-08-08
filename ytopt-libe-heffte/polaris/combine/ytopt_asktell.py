@@ -15,12 +15,14 @@ def persistent_ytopt(H, persis_info, gen_specs, libE_info):
     ps = PersistentSupport(libE_info, EVAL_GEN_TAG)
     user_specs = gen_specs['user']
     ytoptimizer = user_specs['ytoptimizer']
+    ensemble_dir = user_specs['ensemble_dir']
 
     tag = None
     calc_in = None
     first_call = True
     first_write = True
     fields = [i[0] for i in gen_specs['out']]
+    _iter = 0
 
     # Send batches until manager sends stop tag
     while tag not in [STOP_TAG, PERSIS_STOP]:
@@ -55,11 +57,14 @@ def persistent_ytopt(H, persis_info, gen_specs, libE_info):
         # This returns the requested points to the libE manager, which will
         # perform the sim_f evaluations and then give back the values.
         tag, Work, calc_in = ps.send_recv(H_o)
+        _iter += 1
         #print('received:', calc_in, flush=True)
 
         if calc_in is not None:
             if len(calc_in):
                 b = []
+                with open(f"persistent_H.npz", "wb") as npf:
+                    np.save(npf, calc_in)
                 for field_name, entry in zip(gen_specs['persis_in'], calc_in[0]):
                     try:
                         b += [str(entry[0])]

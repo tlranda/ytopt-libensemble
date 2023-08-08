@@ -441,6 +441,7 @@ gen_specs = {
         # Arguments to generation
         'conditions': conditions,
         'num_sim_workers': num_sim_workers,
+        'ensemble_dir': libE_specs['ensemble_dir_path'],
     },
 }
 

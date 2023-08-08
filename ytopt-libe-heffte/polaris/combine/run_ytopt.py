@@ -78,6 +78,18 @@ for arg in int_args:
 if 'resume' in user_args and type(user_args['resume']) is str:
     user_args['resume'] = [user_args['resume']]
 
+# Set options so workers operate in unique directories
+here = os.getcwd() + '/'
+libE_specs['use_worker_dirs'] = True
+libE_specs['sim_dirs_make'] = False  # Otherwise directories separated by each sim call
+# Copy or symlink needed files into unique directories
+libE_specs['sim_dir_symlink_files'] = [here + f for f in ['speed3d.sh', 'speed3d_no_gpu_aware.sh', 'gpu_cleanup.sh', 'plopper.py', 'set_affinity_gpu_polaris.sh']]
+ENSEMBLE_DIR_PATH = ""
+libE_specs['ensemble_dir_path'] = f'./ensemble_{ENSEMBLE_DIR_PATH}'
+#if you need to manually specify resource information, ie:
+#    libE_specs['resource_info'] = {'cores_on_node': (64,256), 'gpus_on_node': 0}
+print(f"This ensemble operates as: {libE_specs['ensemble_dir_path']}"+"\n")
+
 # Variables that will be sed-edited to control scaling
 APP_SCALE = 256
 MPI_RANKS = 512
@@ -292,6 +304,7 @@ gen_specs = {
         'machine_info': MACHINE_INFO,
         'ytoptimizer': ytoptimizer,
         'num_sim_workers': num_sim_workers,
+        'ensemble_dir': libE_specs['ensemble_dir_path'],
     },
 }
 
@@ -305,18 +318,6 @@ exit_criteria = {'sim_max': int(user_args['max-evals'])}
 
 # Added as a workaround to issue that's been resolved on develop
 persis_info = add_unique_random_streams({}, nworkers + 1)
-
-# Set options so workers operate in unique directories
-here = os.getcwd() + '/'
-libE_specs['use_worker_dirs'] = True
-libE_specs['sim_dirs_make'] = False  # Otherwise directories separated by each sim call
-# Copy or symlink needed files into unique directories
-libE_specs['sim_dir_symlink_files'] = [here + f for f in ['speed3d.sh', 'speed3d_no_gpu_aware.sh', 'gpu_cleanup.sh', 'plopper.py', 'set_affinity_gpu_polaris.sh']]
-ENSEMBLE_DIR_PATH = ""
-libE_specs['ensemble_dir_path'] = f'./ensemble_{ENSEMBLE_DIR_PATH}'
-#if you need to manually specify resource information, ie:
-#    libE_specs['resource_info'] = {'cores_on_node': (64,256), 'gpus_on_node': 0}
-print(f"This ensemble operates as: {libE_specs['ensemble_dir_path']}"+"\n")
 
 def manager_save(H, gen_specs, libE_specs):
     import pandas as pd
