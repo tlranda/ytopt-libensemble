@@ -130,7 +130,7 @@ print(f"Depths are based on {threads_per_node} threads on each node, shared acro
 print(f"Selectable depths are: {sequence}"+"\n")
 
 # Define space
-PLOPPER_TARGET = "roibin_sz3.json"
+PLOPPER_TARGET = "roibin_TEMPLATE.json"
 cs = CS.ConfigurationSpace(seed=CONFIGSPACE_SEED)
 c0 = CSH.Constant(name='c0', value=PLOPPER_TARGET)
 p0 = CSH.UniformIntegerHyperparameter(name='p0', lower=1, upper=60) # MPI Threads
