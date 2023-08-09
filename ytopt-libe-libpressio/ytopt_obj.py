@@ -23,7 +23,7 @@ def init_obj(H, persis_info, sim_specs, libE_info):
     y = myobj(point, sim_specs['in'], libE_info['workerID']) # ytopt objective wants a dict
     print(f"[libE simulator - {libE_info['workerID']}] receives objective for point: {point}")
     H_o = np.zeros(len(sim_specs['out']), dtype=sim_specs['out'])
-    H_o['FLOPS'] = y
+    H_o['FOM'] = y
     H_o['elapsed_sec'] = time.time() - start_time
     # Wrap in list for ask-tell processing as a CSV
     # Passed back for processing in CSV records
