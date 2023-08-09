@@ -141,6 +141,15 @@ if 'blosc' in PLOPPER_TARGET:
     p3 = CSH.UniformIntegerHyperparameter(name='p3', lower=1, upper=4) # Blosc internal threads
     cs.add_hyperparameters([p3])
 
+here = pathlib.Path('.')
+libE_specs['use_worker_dirs'] = True
+libE_specs['sim_dirs_make'] = False
+libE_specs['sim_dir_symlink_files'] = [here.joinpath('template_jsons').joinpath(f) for f in [PLOPPER_TARGET]]
+ENSEMBLE_DIR_PATH = ""
+libE_specs['ensemble_dir_path'] = f"./ensemble_{ENSEMBLE_DIR_PATH}"
+print(f"This ensemble operates as: {libE_specs['ensemble_dir_path']}"+"\n")
+
+
 ytoptimizer = Optimizer(
     num_workers = num_sim_workers,
     space = cs,
@@ -163,6 +172,7 @@ MACHINE_INFO = {
     'libE_workers': num_sim_workers,
     'sequence': sequence,
     'app_timeout': 300,
+    'ensemble_dir_path': libE_specs['ensemble_dir_path'],
 }
 
 
@@ -183,7 +193,7 @@ sim_specs = {
         'machine_info': MACHINE_INFO,
     },
 }
-print(cs.get_hyperparameter_names())
+print("Tunable parameters:", cs.get_hyperparameter_names())
 gen_specs = {
     'gen_f': persistent_ytopt,
     'out': [(name, '<U50', (1,)) for name in cs.get_hyperparameter_names() if name.startswith('c')] +\
@@ -203,15 +213,6 @@ alloc_specs = {
 }
 exit_criteria = {'sim_max': int(user_args['max-evals'])}
 persis_info = add_unique_random_streams({}, nworkers+1)
-
-here = pathlib.Path('.')
-libE_specs['use_worker_dirs'] = True
-libE_specs['sim_dirs_make'] = False
-libE_specs['sim_dir_symlink_files'] = [here.joinpath('template_jsons').joinpath(f) for f in [PLOPPER_TARGET]]
-ENSEMBLE_DIR_PATH = ""
-libE_specs['ensemble_dir_path'] = f"./ensemble_{ENSEMBLE_DIR_PATH}"
-print(f"This ensemble operates as: {libE_specs['ensemble_dir_path']}"+"\n")
-
 
 def manager_save(H, gen_specs, libE_specs):
     import pandas as pd
