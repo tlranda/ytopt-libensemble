@@ -10,11 +10,12 @@ class Plopper:
     def __init__(self,sourcefile,outputdir,formatSTR=None):
         # Initilizing global variables
         self.sourcefile = sourcefile
+        assert os.path.exists(sourcefile)
         self.outputdir = outputdir+"/tmp_files"
         if not os.path.exists(self.outputdir):
             os.makedirs(self.outputdir)
         if formatSTR is None:
-            self.cmd_template = "mpiexec -n {mpi_ranks} --ppn {ranks_per_node} --depth {depth} sh ./set_affinity_gpu_polaris.sh {interimfile}"
+            self.cmd_template = "mpiexec -n {mpi_ranks} /lus/grand/projects/LibPressioTomo/roibin/./build/roibin_test -f /lus/grand/projects/LibPressioTomo/roibin/example_data/cxic0415_0020.cxi -p {interimfile}"
         else:
             self.cmd_template = formatSTR
 
@@ -56,8 +57,8 @@ class Plopper:
             with open(this_log,"r") as logged:
                 lines = [_.rstrip() for _ in logged.readlines()]
                 for line in lines:
-                    if "Performance: " in line:
-                        split = [_ for _ in line.split(' ') if len(_) > 0]
+                    if "wallclock_bandwidth_GBps" in line:
+                        split = [_ for _ in line.split('=') if len(_) > 0]
                         result = -1 * float(split[1])
                         print(f"[worker {workerID} - plopper] evaluation OK: {result}")
                         break
@@ -84,9 +85,9 @@ class Plopper:
 
         #Find the execution metric
         # Divide and promote instead of truncate
-        j = math.ceil(ranks_per_node * dictVal['P9'] / 64)
+        j = 4
         # Command template set up in ytopt_obj.py -- this separates the need to look at what system we're on out of the plopper
-        cmd = self.cmd_template.format(mpi_ranks=mpi_ranks, ranks_per_node=ranks_per_node, depth=dictVal['P9'], j=j, interimfile=interimfile)
+        cmd = self.cmd_template.format(mpi_ranks=mpi_ranks, ranks_per_node=ranks_per_node, depth=60, j=j, interimfile=interimfile)
         print(f"[worker {workerID} - plopper] runs: {cmd}")
 
         results = []
