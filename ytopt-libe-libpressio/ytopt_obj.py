@@ -70,15 +70,7 @@ def myobj(point: dict, params: list, workerID: int) -> float:
 
         # Machine identifier changes the proper invocation to utilize allocated resources
         # Also customize timeout based on application scale per system
-        if 'polaris' in machine_info['identifier']:
-            if worker_nodefile is None:
-                machine_format_str = "mpiexec -n {mpi_ranks} --ppn {ranks_per_node} --depth {depth} --cpu-bind depth --env OMP_NUM_THREADS={depth} sh ./set_affinity_gpu_polaris.sh {interimfile}"
-            else:
-                machine_format_str = "mpiexec -n {mpi_ranks} --ppn {ranks_per_node} --depth {depth} --cpu-bind depth --env OMP_NUM_THREADS={depth} --hostfile "+worker_nodefile+" sh ./set_affinity_gpu_polaris.sh {interimfile}"
-        elif 'theta' in machine_info['identifier']:
-            machine_format_str = "aprun -n {mpi_ranks} -N {ranks_per_node} -cc depth -d {depth} -j {j} -e OMP_NUM_THREADS={depth} sh {interimfile}"
-        else:
-            machine_format_str = None
+        machine_format_str = None
 
         # Set known timeouts to be more specific
         known_timeouts = {}
@@ -89,9 +81,9 @@ def myobj(point: dict, params: list, workerID: int) -> float:
             gpu_timeouts = {}
             known_timeouts.update(gpu_timeouts)
 
-        plopper_template = ""
+        x = np.array(list(point.values()))
+        plopper_template = x[0]
         print(f"[worker {workerID} - obj] receives point {point}")
-        x = np.array(point.values())
         def plopper_func(x, params):
             # Should utilize machine identifier
             obj = Plopper(plopper_template, './', machine_format_str)
