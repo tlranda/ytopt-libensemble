@@ -130,7 +130,7 @@ print(f"Depths are based on {threads_per_node} threads on each node, shared acro
 print(f"Selectable depths are: {sequence}"+"\n")
 
 # Define space
-PLOPPER_TARGET = "template_jsons/template.json"
+PLOPPER_TARGET = "roibin_sz3.json"
 cs = CS.ConfigurationSpace(seed=CONFIGSPACE_SEED)
 c0 = CSH.Constant(name='c0', value=PLOPPER_TARGET)
 p0 = CSH.UniformIntegerHyperparameter(name='p0', lower=1, upper=60) # MPI Threads
@@ -162,6 +162,7 @@ MACHINE_INFO = {
     'gpu_enabled': gpu_enabled,
     'libE_workers': num_sim_workers,
     'sequence': sequence,
+    'app_timeout': 300,
 }
 
 
@@ -206,7 +207,7 @@ persis_info = add_unique_random_streams({}, nworkers+1)
 here = pathlib.Path('.')
 libE_specs['use_worker_dirs'] = True
 libE_specs['sim_dirs_make'] = False
-libE_specs['sim_dir_symlink_files'] = [here.joinpath(f) for f in [PLOPPER_TARGET]]
+libE_specs['sim_dir_symlink_files'] = [here.joinpath('template_jsons').joinpath(f) for f in [PLOPPER_TARGET]]
 ENSEMBLE_DIR_PATH = ""
 libE_specs['ensemble_dir_path'] = f"./ensemble_{ENSEMBLE_DIR_PATH}"
 print(f"This ensemble operates as: {libE_specs['ensemble_dir_path']}"+"\n")
