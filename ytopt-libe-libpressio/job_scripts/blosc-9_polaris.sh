@@ -2,7 +2,7 @@
 #PBS -l walltime=03:00:00
 #PBS -l select=10:system=polaris
 #PBS -l filesystems=home:grand
-#PBS -A EE-ECP
+#PBS -A LibPressioTomo
 #PBS -q prod
 
 source /home/trandall/polaris_libpressio_env.sh;
