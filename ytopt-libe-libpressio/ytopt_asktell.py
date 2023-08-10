@@ -60,6 +60,8 @@ def persistent_ytopt(H, persis_info, gen_specs, libE_info):
         if calc_in is not None:
             if len(calc_in):
                 b = []
+                with open(f"persistent_H.npz", "wb") as npf:
+                    np.save(npf, calc_in)
                 for field_name, entry in zip(gen_specs['persis_in'], calc_in[0]):
                     try:
                         b += [str(entry[0])]

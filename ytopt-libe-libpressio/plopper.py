@@ -57,7 +57,7 @@ class Plopper:
             with open(this_log,"r") as logged:
                 lines = [_.rstrip() for _ in logged.readlines()]
                 for line in lines:
-                    if "wallclock_bandwidth_GBps" in line:
+                    if "compress_bandwidth_GBps" in line:
                         split = [_ for _ in line.split('=') if len(_) > 0]
                         result = -1 * float(split[1])
                         print(f"[worker {workerID} - plopper] evaluation OK: {result}")
