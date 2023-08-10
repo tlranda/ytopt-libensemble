@@ -320,7 +320,6 @@ exit_criteria = {'sim_max': int(user_args['max-evals'])}
 persis_info = add_unique_random_streams({}, nworkers + 1)
 
 def manager_save(H, gen_specs, libE_specs):
-    import pandas as pd
     unfinished = H[~H["sim_ended"]][gen_specs['persis_in']]
     finished = H[H["sim_ended"]][gen_specs['persis_in']]
     unfinished_log = pd.DataFrame(dict((k, unfinished[k].flatten()) for k in gen_specs['persis_in']))

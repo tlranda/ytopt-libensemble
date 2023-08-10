@@ -22,7 +22,13 @@ import multiprocessing
 multiprocessing.set_start_method('fork', force=True)
 
 # Import libEnsemble items for this test
-from libensemble.libE import libE
+try:
+    from libensemble.specs import SimSpecs, GenSpecs, LibeSpecs, AllocSpecs, ExitCriteria
+    from libensemble import Ensemble
+    legacy_mode = False
+except ImportError:
+    from libensemble.libE import libE
+    legacy_mode = True
 from libensemble.alloc_funcs.start_only_persistent import only_persistent_gens as alloc_f
 from libensemble.tools import parse_args, save_libE_output, add_unique_random_streams
 from libensemble import logger
@@ -35,6 +41,8 @@ import ConfigSpace as CS
 import ConfigSpace.hyperparameters as CSH
 from ConfigSpace import ConfigurationSpace, EqualsCondition
 from ytopt.search.optimizer import Optimizer
+
+import pandas as pd
 
 # Parse comms, default options from commandline
 nworkers, is_manager, libE_specs, user_args_in = parse_args()
@@ -68,6 +76,18 @@ assert all([opt in user_args for opt in req_settings]), \
 int_args = ['max-evals', ]
 for arg in int_args:
     user_args[arg] = int(user_args[arg])
+
+# Set options so workers operate in unique directories
+PLOPPER_TARGET = "roibin_TEMPLATE.json"
+here = pathlib.Path('.')
+libE_specs['use_worker_dirs'] = True
+libE_specs['sim_dirs_make'] = False
+libE_specs['sim_dir_symlink_files'] = [here.joinpath('template_jsons').joinpath(f) for f in [PLOPPER_TARGET]]
+ENSEMBLE_DIR_PATH = ""
+libE_specs['ensemble_dir_path'] = f"./ensemble_{ENSEMBLE_DIR_PATH}"
+#if you need to manually specify resource information, ie:
+#    libE_specs['resource_info'] = {'cores_on_node': (64,256), 'gpus_on_node': 0}
+print(f"This ensemble operates as: {libE_specs['ensemble_dir_path']}"+"\n")
 
 # SEEDING
 CONFIGSPACE_SEED = 1234
@@ -130,7 +150,6 @@ print(f"Depths are based on {threads_per_node} threads on each node, shared acro
 print(f"Selectable depths are: {sequence}"+"\n")
 
 # Define space
-PLOPPER_TARGET = "roibin_TEMPLATE.json"
 cs = CS.ConfigurationSpace(seed=CONFIGSPACE_SEED)
 c0 = CSH.Constant(name='c0', value=PLOPPER_TARGET)
 p0 = CSH.UniformIntegerHyperparameter(name='p0', lower=1, upper=60) # MPI Threads
@@ -140,14 +159,6 @@ cs.add_hyperparameters([c0,p0,p1,p2])
 if 'blosc' in PLOPPER_TARGET:
     p3 = CSH.UniformIntegerHyperparameter(name='p3', lower=1, upper=4) # Blosc internal threads
     cs.add_hyperparameters([p3])
-
-here = pathlib.Path('.')
-libE_specs['use_worker_dirs'] = True
-libE_specs['sim_dirs_make'] = False
-libE_specs['sim_dir_symlink_files'] = [here.joinpath('template_jsons').joinpath(f) for f in [PLOPPER_TARGET]]
-ENSEMBLE_DIR_PATH = ""
-libE_specs['ensemble_dir_path'] = f"./ensemble_{ENSEMBLE_DIR_PATH}"
-print(f"This ensemble operates as: {libE_specs['ensemble_dir_path']}"+"\n")
 
 
 ytoptimizer = Optimizer(
@@ -160,6 +171,54 @@ ytoptimizer = Optimizer(
     set_SEED = YTOPT_SEED,
     set_NI = 10,
 )
+
+# We may be resuming a previous iteration. LibEnsemble won't let the directory be resumed, so
+# results will have to be merged AFTER the fact (probably by libEwrapper.py). To support this
+# behavior, we only interact with the Optimizer here for run_ytopt.py, so only the Optimizer
+# needs to be lied to in order to simulate the past evaluations
+if 'resume' in user_args:
+    resume_from = [_ for _ in user_args['resume']]
+    print(f"Resuming from records indicated in files: {resume_from}")
+    previous_records = pd.concat([pd.read_csv(_) for _ in resume_from])
+    print(f"Loaded {len(previous_records)} previous evaluations")
+
+    # Form the fake records using optimizer's preferred lie
+    lie = ytoptimizer._get_lie()
+    param_cols = cs.get_hyperparameter_names()
+    result_col = 'FOM'
+
+    keylist, resultlist = [], []
+    for idx, row in previous_records.iterrows():
+        # I believe this is sufficient for LibPressio -- however in a conditional search space with
+        # sometimes-deactivated parameters you may need to be more careful.
+        # ytoptimizer.make_key() will help but only if the records indicate nan-values appropriately
+        key = ytoptimizer.make_key(row[param_cols].to_list())
+        if key not in ytoptimizer.evals:
+            # Stage the result of asking for the key
+            ytoptimizer.evals[key] = lie
+            # Prepare lie material and the actual results to tell back
+            keylist.append(key)
+            keydict = dict((k,v) for (k,v) in zip(param_cols, key))
+            result = row[result_col]
+            resultlist.append(tuple([keydict, result]))
+    n_prepared = len(keylist)
+    print(f"Prepared {n_prepared} prior evaluations")
+    # Now that side affects are in place, commit the actual lies
+    # We also guarantee underlying optimizers are forced to fit by setting NI / _n_initial_points = 0
+    # This means that future ask()'s will not be random and will be based on a model fitted to available data
+    ytoptimizer.NI = ytoptimizer._optimizer._n_initial_points = 0
+    ytoptimizer.counter += n_prepared
+    ytoptimizer._optimizer.tell(keylist, [lie] * n_prepared)
+    # Update the lies and trigger underlying optimizer to refit
+    ytoptimizer.tell(resultlist)
+    old_max_evals = user_args['max-evals']
+    user_args['max-evals'] -= n_prepared
+    # When resuming, we never want to actually use ask_initial() so have that function point to ask()
+    def wrap_initial(n_points=1):
+        points = ytoptimizer.ask(n_points=n_points)
+        return list(points)[0]
+    ytoptimizer.ask_initial = wrap_initial
+    print(f"Optimizer updated and ready to resume -- max-evals reduced {old_max_evals} --> {user_args['max-evals']}")
 
 MACHINE_IDENTIFIER = "tbd"
 print(f"Identifying machine as {MACHINE_IDENTIFIER}"+"\n")
@@ -215,7 +274,6 @@ exit_criteria = {'sim_max': int(user_args['max-evals'])}
 persis_info = add_unique_random_streams({}, nworkers+1)
 
 def manager_save(H, gen_specs, libE_specs):
-    import pandas as pd
     unfinished = H[~H["sim_ended"]][gen_specs['persis_in']]
     finished = H[H["sim_ended"]][gen_specs['persis_in']]
     unfinished_log = pd.DataFrame(dict((k, unfinished[k].flatten()) for k in gen_specs['persis_in']))
@@ -233,11 +291,23 @@ def manager_save(H, gen_specs, libE_specs):
     print(f"All manager-finished results logged to {output}")
 
 if __name__ == '__main__':
-    H, persis_info, flag = libE(sim_specs, gen_specs, exit_criteria, persis_info,
-                                alloc_specs=alloc_specs, libE_specs=libE_specs)
+    if legacy_mode:
+        # Perform the libE run
+        H, persis_info, flag = libE(sim_specs, gen_specs, exit_criteria, persis_info,
+                                    alloc_specs=alloc_specs, libE_specs=libE_specs)
+    else:
+        # We can separate experiment creation from running, which can allow an exit trap
+        # to capture more results during shutdown
+        experiment = Ensemble(sim_specs=sim_specs, gen_specs=gen_specs, alloc_specs=alloc_specs,
+                              exit_criteria=exit_criteria, persis_info=persis_info,
+                              libE_specs=libE_specs)
+        H, persis_info, flag = experiment.run()
+
+    # Save History array to file
     if is_manager:
-        print("\nLibEnsemble has completed evaluations.")
-        with open(f"{libE_specs['ensemble_dir_path']}/full_H_array.npz", 'wb') as np_save_H:
+        # We may have missed the final evaluation in the results file
+        print("\nlibEnsemble has completed evaluations.")
+        with open(f"{libE_specs['ensemble_dir_path']}/full_H_array.npz",'wb') as np_save_H:
             np.save(np_save_H, H)
         manager_save(H, gen_specs, libE_specs)
 
