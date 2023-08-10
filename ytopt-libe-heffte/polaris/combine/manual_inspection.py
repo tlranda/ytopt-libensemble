@@ -61,11 +61,11 @@ for col in ['p9']:
 source_files = [
 'logs/ThetaSourceTasks/Theta_002n_0064a/manager_results.csv',
 'logs/ThetaSourceTasks/Theta_004n_0064a/manager_results.csv',
-#'logs/ThetaSourceTasks/Theta_008n_0064a/manager_results.csv',
-#'logs/ThetaSourceTasks/Theta_016n_0064a/manager_results.csv',
-#'logs/ThetaSourceTasks/Theta_032n_0064a/manager_results.csv',
-#'logs/ThetaSourceTasks/Theta_064n_0064a/manager_results.csv',
-#'logs/ThetaSourceTasks/Theta_128n_0064a/manager_results.csv',
+'logs/ThetaSourceTasks/Theta_008n_0064a/manager_results.csv',
+'logs/ThetaSourceTasks/Theta_016n_0064a/manager_results.csv',
+'logs/ThetaSourceTasks/Theta_032n_0064a/manager_results.csv',
+'logs/ThetaSourceTasks/Theta_064n_0064a/manager_results.csv',
+'logs/ThetaSourceTasks/Theta_128n_0064a/manager_results.csv',
 ]
 sources = [pd.read_csv(_) for _ in source_files]
 for source in sources:
@@ -176,5 +176,6 @@ for idx, col in enumerate(compare_cols):
     ax.set_xticklabels(options)
     ax.legend()
     ax.set_title(f"KL Divergence of {col}: {kl_div[idx]}")
-plt.show()
+    fig.savefig(f"KL_Div_{col}.png", dpi=400)
+#plt.show()
 
