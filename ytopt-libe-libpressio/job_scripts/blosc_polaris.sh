@@ -8,8 +8,8 @@
 source /home/trandall/polaris_libpressio_env.sh;
 cd /home/trandall/ytune_23/tlranda-ytopt-libensemble/ytopt-libe-libpressio;
 
-jsons=( 'blosc' 'blosc-6' 'blosc-9' 'bzip-6' 'bzip-9' 'cusz' 'fpzip' 'mgard' 'mgardgpu' 'qoz' 'sz' 'zfp' 'zfpgpu' ); # 'sz3'
-mpi_ranks=( 2 4 6 8 12 16 24 32 );
+jsons=( 'blosc' );
+mpi_ranks=( 4 6 8 12 16 24 32 );
 #mpi_ranks=( 4 8 16 32 64 256 492 );
 #  nodes =   1 2  4  8 16  64 123
 workers=( 4 );
