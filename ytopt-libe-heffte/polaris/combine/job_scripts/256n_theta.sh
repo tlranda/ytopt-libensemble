@@ -1,14 +1,14 @@
 #!/bin/bash -x
 #COBALT -t 06:00:00
 #COBALT -n 257
-#COBALT --attrs filesystems=home,grand,eagle
+#COBALT --attrs filesystems=home
 #COBALT -A EE-ECP
 #COBALT -q default
 
 source /home/trandall/theta_knl_heffte_env.sh;
 cd /home/trandall/ytune_23/tlranda-ytopt-libensemble/ytopt-libe-heffte/polaris/combine;
 
-app_scales=( 64 128 256 512 1024 );
+app_scales=( 256 512 1024 1400 );
 mpi_ranks=( 16384 );
 #mpi_ranks=( 64 128 256 512 1024 2048 4096 8192 16384 );
 # nodes =    1   2   4   8   16   32   64  128    256
