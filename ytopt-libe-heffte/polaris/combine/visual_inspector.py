@@ -21,6 +21,7 @@ def build(prs=None):
     prs.add_argument("--monotonic", action="store_true", help="Reorder to have objective monotonically increasing")
     prs.add_argument("--stats", action="store_true", help="Calculate extended stats (text only)")
     prs.add_argument("--no-plots", action="store_true", help="Skip visuals")
+    prs.add_argument("--normalize-y", action="store_true", help="Normalize y-axis values")
     return prs
 
 def parse(prs=None, args=None):
@@ -85,8 +86,11 @@ def load(args):
         # Maybe we don't want failures
         if args.drop_failures:
             frame = frame.loc[frame['GFLOPS'] > 0.0]
+        # Normalization
+        if args.normalize_y:
+            frame['GFLOPS'] = (frame['GFLOPS'] - frame['GFLOPS'].min()) / (frame['GFLOPS'].max() - frame['GFLOPS'].min())
         frames.append(frame)
-        names.append(dirname.rstrip('/').split('/')[-1])
+        names.append(dirname.rstrip('/').split('/')[-1] + f" ({len(frame)})")
     return frames, names
 
 def observations(frame, args):
@@ -150,6 +154,8 @@ def visualizations(frames, args):
             frame['index'] = frame.index
         fline = sns.lineplot(frame, x='index', y='GFLOPS', estimator=None, marker='+', label=name,
                              color=color, markeredgecolor=color, linestyle='--', linewidth=1)
+        if args.normalize_y:
+            ax.set_ylabel("Normalized GFLOP/s")
         if args.flops_only:
             ax.hlines(frame['GFLOPS'].quantile(args.quantile[idx]), xmin=0, xmax=max_frame_index, color=color)
 
