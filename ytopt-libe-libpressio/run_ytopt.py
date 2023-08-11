@@ -84,7 +84,20 @@ libE_specs['use_worker_dirs'] = True
 libE_specs['sim_dirs_make'] = False
 libE_specs['sim_dir_symlink_files'] = [here.joinpath('template_jsons').joinpath(f) for f in [PLOPPER_TARGET]]
 ENSEMBLE_DIR_PATH = ""
-libE_specs['ensemble_dir_path'] = f"./ensemble_{ENSEMBLE_DIR_PATH}"
+# Automatic resuming
+proposed_stem = f"./ensemble_{ENSEMBLE_DIR_PATH}"
+proposed_ens_dir_path = pathlib.Path(proposed_stem)
+if proposed_ens_dir_path.exists():
+    if 'resume' not in user_args:
+        user_args['resume'] = [proposed_stem]
+    proposed_stem += "_Resume_"
+    count = 1
+    proposed_ens_dir_path = pathlib.Path(proposed_stem+f"{count}")
+    while proposed_ens_dir_path.exists():
+        user_args['resume'] = [str(proposed_ens_dir_path)]
+        count += 1
+        proposed_ens_dir_path = pathlib.Path(proposed_stem+f"{count}")
+libE_specs['ensemble_dir_path'] = str(proposed_ens_dir_path)
 #if you need to manually specify resource information, ie:
 #    libE_specs['resource_info'] = {'cores_on_node': (64,256), 'gpus_on_node': 0}
 print(f"This ensemble operates as: {libE_specs['ensemble_dir_path']}"+"\n")
