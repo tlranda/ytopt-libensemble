@@ -3,12 +3,17 @@ import pandas as pd
 import pathlib
 import itertools
 import time
+import os
 
 from plopper import Plopper
 from deinterpret import TopologyCache
 
+OUTPUTDIR = pathlib.Path("Variance_Results")
+OUTPUTDIR.mkdir(parents=True,exist_ok=True)
+
 #SYSTEM = "Polaris"
 SYSTEM = "Theta"
+template_string = "mpiexec -n {mpi_ranks} --ppn {ranks_per_node} --depth {depth} --cpu-bind depth --env OMP_NUM_THREADS={depth} sh ./set_affinity_gpu_polaris.sh {interimfile}" if SYSTEM == "Polaris" else "aprun -n {mpi_ranks} -N {ranks_per_node} -cc depth -d {depth} -j {j} -e OMP_NUM_THREADS={depth} sh {interimfile}"
 TARGET_REPLAY = sorted(pathlib.Path(f"logs/{SYSTEM}SourceTasks/").glob(f"{SYSTEM}_*n_*a/manager_results.csv"))
 INCREMENT = 0.2
 QUANTILES = np.arange(0,1+INCREMENT,INCREMENT)
@@ -106,7 +111,7 @@ for file in TARGET_REPLAY:
     selections.append(selected)
     del (original_csv, prev_worker_time, elapsed_diff, csv, idxs)
 
-del (param_cols, topCache, top_keymap)
+del (topCache, top_keymap)
 
 print("OVERALL:", N_TO_RUN, "Unique Runtimes")
 print("\t", EXPECTED_RUNTIME, "(in seconds)")
@@ -114,16 +119,33 @@ print("\t", EXPECTED_RUNTIME/60.0, "(in minutes)")
 print("\t", EXPECTED_RUNTIME/3600.0, "(in hours)")
 print()
 
-start_time = time.time()
-
 for idx, (file, selected) in enumerate(zip(TARGET_REPLAY, selections)):
     print(file, '--', REPEATS * selected["Expected Runtime"].sum())
-    pretend_flops, pretend_elapses = [1] * len(selected), [1] * len(selected)
-    selected.insert(len(selected.columns), "FLOPS_R1", pretend_flops)
-    selected.insert(len(selected.columns), "RUNTIME_R1", pretend_elapses)
-    selected.insert(len(selected.columns), "FLOPS_R2", pretend_flops)
-    selected.insert(len(selected.columns), "RUNTIME_R2", pretend_elapses)
-    selected.insert(len(selected.columns), "FLOPS_R3", pretend_flops)
-    selected.insert(len(selected.columns), "RUNTIME_R3", pretend_elapses)
+    new_outname = OUTPUTDIR.joinpath(str(file.parent.stem) + "_variance.csv")
+    # Adjustments for plopper as needed
+    if selected['p1'].max() < 1024:
+        plopper_template = "./speed3d.sh"
+    else:
+        plopper_template = "./speed3d_no_gpu_aware.sh"
+        selected.loc[selected.index, 'p1'] = [prec+"-long" if 'long' not in prec else prec for prec in selected['p0']]
+    # Make and use the plopper to collect results
+    obj = Plopper(plopper_template, str(OUTPUTDIR), template_string)
+    flops, elapses = np.zeros((len(selected),3)), np.zeros((len(selected),3))
+    for idx, (pdidx, record) in enumerate(selected.iterrows()):
+        os.environ["OMP_NUM_THREADS"] = str(record['p9'])
+        for repeat in range(REPEATS):
+            start_time = time.time()
+            value = record[param_cols].to_list()
+            flops[idx,repeat] = obj.findRuntime(value, param_cols,
+                                                1, 1, 300, # WorkerID, LibE_Workers, app_timeout
+                                                record['mpi_ranks'],
+                                                record['ranks_per_node'],
+                                                1) # n_repeats
+            elapses[idx,repeat] = time.time() - start_time
+    for i in range(REPEATS):
+        selected.insert(len(selected.columns), f"FLOPS_REPEAT_{i}", flops[:,i])
+        selected.insert(len(selected.columns), f"RUNTIME_REPEAT_{i}", elapses[:,i])
+    selected.to_csv(new_outname, index_label='old_lookup_idx')
+    print("Key experiments replicated and saved to:", new_outname)
     print(selected)
 
