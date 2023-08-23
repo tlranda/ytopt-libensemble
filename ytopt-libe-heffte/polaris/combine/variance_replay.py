@@ -23,6 +23,7 @@ N_TO_RUN = 0
 EXPECTED_RUNTIME = 0
 
 param_cols = [f'p{_}' for _ in range(10)] + ['c0']
+capital_cols = [_.upper() for _ in param_cols]
 topCache = TopologyCache()
 top_keymap = {'P7': '-ingrid', 'P8': '-outgrid'}
 
@@ -136,7 +137,7 @@ for idx, (file, selected) in enumerate(zip(TARGET_REPLAY, selections)):
         for repeat in range(REPEATS):
             start_time = time.time()
             value = record[param_cols].to_list()
-            flops[idx,repeat] = obj.findRuntime(value, param_cols,
+            flops[idx,repeat] = obj.findRuntime(value, capital_cols,
                                                 1, 1, 300, # WorkerID, LibE_Workers, app_timeout
                                                 record['mpi_ranks'],
                                                 record['ranks_per_node'],
