@@ -101,7 +101,7 @@ for file in TARGET_REPLAY:
             altered_topologies[relative_index, tidx] = altering
         # Sequence
         altering = (group[p9_key] * len(sequence)).astype(int)
-        altering = altering.apply(lambda s: max(min(s, len(sequence)-1), 0))
+        altering = altering.apply(lambda s: int(max(min(s, len(sequence)-1), 0)))
         # Can't directly use group.index, have to put it relative to the subset
         relative_index = [selected.index.tolist().index(_) for _ in group.index]
         altered_sequence[relative_index] = sequence[altering].reshape(len(altering),1)
@@ -136,6 +136,7 @@ for idx, (file, selected) in enumerate(zip(TARGET_REPLAY, selections)):
         os.environ["OMP_NUM_THREADS"] = str(record['p9'])
         for repeat in range(REPEATS):
             start_time = time.time()
+            record['p9'] = int(record['p9'])
             value = record[param_cols].to_list()
             flops[idx,repeat] = obj.findRuntime(value, capital_cols,
                                                 1, 1, 300, # WorkerID, LibE_Workers, app_timeout
