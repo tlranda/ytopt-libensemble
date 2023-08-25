@@ -31,7 +31,7 @@ for file in INSPECT:
     original_csv = pd.read_csv(file)
     original_csv['FLOPS'] *= -1
     # Quantiles based on successful evaluations only
-    csv = original_csv[original_csv['FLOPS'] > 0].sort_values(by=['FLOPS'])
+    csv = original_csv[original_csv['FLOPS'] > 0]
     # Convert flexible parameters
     TPN = list(set(csv['threads_per_node']))[0]
     RPN = list(set(csv['ranks_per_node']))[0]
@@ -87,7 +87,7 @@ for file in INSPECT:
     # Substitute altered values
     for key, replacement in zip(alter_keys,
                                 np.hsplit(altered_topologies, altered_topologies.shape[1])+[altered_sequence]):
-        csv.loc[csv.index, key] = replacement
+        csv.insert(0, key, replacement)
     # Typecast fix
     csv = csv.astype({'p9_replace': 'int64'})
     # Convert categorical keys to floats
@@ -161,16 +161,18 @@ def gower(x,y, weights=None):
 
 fig, ax = plt.subplots()
 for idx, (file, selected) in enumerate(zip(INSPECT, selections)):
+    if '1024a' not in str(file):
+        continue
     # Compare distances to BEST performing data
-    best = selected.iloc[-1]
-    best_vals = best[param_cols]
+    best_index = selected['FLOPS'].argmax()
+    best = selected.iloc[best_index]
     # TODO: Weight columns by importance
     best_frame = pd.DataFrame(best.values.reshape((1,-1)), columns=selected.columns).infer_objects()
-    similarities = gower(best_frame, selected)
-    if '1024a' in str(file):
-        line = ax.plot(np.arange(similarities.shape[1]), similarities[0,:], label=file.parent.stem)
+    similarities = gower(best_frame[param_cols], selected[param_cols])
+    line = ax.plot(np.arange(similarities.shape[1]), similarities[0,np.argsort(-similarities[0])], label=file.parent.stem)
+    dot = ax.scatter(best_index, 0.0, color=line[0].get_color(), marker='*', s=32)
 ax.set_ylabel("Gower Similarity to Known Optimum")
-ax.set_xlabel("FLOP/s ascending rank")
+ax.set_xlabel("Evaluation #")
 ax.legend()
-plt.show()
+fig.savefig(f'all_gower_similarity.png')
 
