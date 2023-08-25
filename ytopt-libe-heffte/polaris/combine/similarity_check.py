@@ -3,31 +3,64 @@ import pandas as pd
 import pathlib
 import itertools
 import matplotlib.pyplot as plt
-
+import argparse
 from deinterpret import TopologyCache
 
-#SYSTEM = "Polaris"
-SYSTEM = "Theta"
-INSPECT = sorted(pathlib.Path(f"logs/{SYSTEM}SourceTasks/").glob(f"{SYSTEM}_*n_*a/manager_results.csv"))
+def build():
+    prs = argparse.ArgumentParser()
+    prs.add_argument("--system", choices=["Polaris", "Theta"], default="Theta",
+                     help="System to scan logs from (default: %(default)s)")
+    prs.add_argument("--nodes", choices=["*"] + [str(2**_) for _ in range(8)], default="*",
+                     help="Number of nodes to include (* == all) (default: %(default)s)")
+    prs.add_argument("--app", choices=["*"] + [str(2**_) for _ in range(6,11)] + ["1400"], default="*",
+                     help="App size to include (* == all) (default: %(default)s)")
+    prs.add_argument("--outdir", default=".",
+                     help="Directory to output images into (default: %(default)s)")
+    prs.add_argument("--individual", action="store_true",
+                     help="Save each figure individually rather than aggregating together (default: %(default)s)")
+    prs.add_argument("--force-monotonic", action="store_true",
+                     help="Re-sort data for monotonic curve even though this breaks the x-axis meaning (default: %(default)s)")
+    #prs.add_argument(
+    #                 help=" (default: %(default)s)")
+    return prs
 
-param_cols = [f'p{_}' for _ in range(10)]
+def parse(args=None, prs=None):
+    if prs is None:
+        prs = build()
+    if args is None:
+        args = prs.parse_args()
+    if args.nodes != '*':
+        if args.system == "Polaris":
+            while len(args.nodes) < 3:
+                args.nodes = '0' + args.nodes
+        elif args.system == "Theta":
+            while len(args.nodes) < 3:
+                args.nodes = '0' + args.nodes
+    if args.app != '*':
+        if args.system == "Polaris":
+            while len(args.app) < 4:
+                args.app = '0' + args.app
+        elif args.system == "Theta":
+            while len(args.app) < 4:
+                args.app = '0' + args.app
+    return args
+
 topCache = TopologyCache()
-top_keymap = {'P7': '-ingrid', 'P8': '-outgrid'}
-alter_keys = ['p7_replace', 'p8_replace', 'p9_replace']
-catkeys = [f'p{_}' for _ in range(7)]
-renames = dict((k, k+'_replace') for k in catkeys)
-catvals = [['double','float'], #p0
-           [64,128,256,512,1024,1400], #p1
-           ['-no-reorder','-reorder',' '], #p2
-           ['-a2a','-a2av',' '], #p3
-           ['-p2p','-p2p_pl',' '], #p4
-           ['-pencils','-slabs',' '], #p5
-           ['-r2c_dir 0','-r2c_dir 1','-r2c_dir 2',' '], #p6
-          ]
-
-selections = []
-
-for file in INSPECT:
+def convert(file):
+    global topCache
+    param_cols = [f'p{_}' for _ in range(10)]
+    top_keymap = {'P7': '-ingrid', 'P8': '-outgrid'}
+    alter_keys = ['p7_replace', 'p8_replace', 'p9_replace']
+    catkeys = [f'p{_}' for _ in range(7)]
+    renames = dict((k, k+'_replace') for k in catkeys)
+    catvals = [['double','float'], #p0
+               [64,128,256,512,1024,1400], #p1
+               ['-no-reorder','-reorder',' '], #p2
+               ['-a2a','-a2av',' '], #p3
+               ['-p2p','-p2p_pl',' '], #p4
+               ['-pencils','-slabs',' '], #p5
+               ['-r2c_dir 0','-r2c_dir 1','-r2c_dir 2',' '], #p6
+              ]
     original_csv = pd.read_csv(file)
     original_csv['FLOPS'] *= -1
     # Quantiles based on successful evaluations only
@@ -97,9 +130,7 @@ for file in INSPECT:
             new_vals[idx] = catval.index(newval)/(len(catval)-1)
         csv.rename(columns=dict([rename]), inplace=True)
         csv.insert(0,catkey,new_vals)
-    selections.append(csv)
-
-del (topCache, top_keymap)
+    return csv
 
 # Gower distance for similarity
 # Based on wwwjk366's Gower library (github.com/wwwjk366/gower)
@@ -159,20 +190,46 @@ def gower(x,y, weights=None):
             out[i:, j_start] = sums
     return out
 
-fig, ax = plt.subplots()
-for idx, (file, selected) in enumerate(zip(INSPECT, selections)):
-    if '1024a' not in str(file):
-        continue
-    # Compare distances to BEST performing data
-    best_index = selected['FLOPS'].argmax()
-    best = selected.iloc[best_index]
-    # TODO: Weight columns by importance
-    best_frame = pd.DataFrame(best.values.reshape((1,-1)), columns=selected.columns).infer_objects()
-    similarities = gower(best_frame[param_cols], selected[param_cols])
-    line = ax.plot(np.arange(similarities.shape[1]), similarities[0,np.argsort(-similarities[0])], label=file.parent.stem)
-    dot = ax.scatter(best_index, 0.0, color=line[0].get_color(), marker='*', s=32)
-ax.set_ylabel("Gower Similarity to Known Optimum")
-ax.set_xlabel("Evaluation #")
-ax.legend()
-fig.savefig(f'all_gower_similarity.png')
+def main(args=None):
+    args = parse(args)
+    INSPECT = sorted(pathlib.Path(f"logs/{args.system}SourceTasks/").glob(f"{args.system}_{args.nodes}n_{args.app}a/manager_results.csv"))
+    outdir = pathlib.Path(args.outdir)
+
+    selections = []
+    for file in INSPECT:
+        selections.append(convert(file))
+    global topCache
+    del topCache
+
+    param_cols = [f'p{_}' for _ in range(10)]
+    xlabel = "Evaluation #"
+    ylabel = "Gower Similarity to Known Optimum"
+    if not args.individual:
+        fig, ax = plt.subplots()
+        ax.set_ylabel(ylabel)
+        ax.set_xlabel(xlabel)
+    for idx, (file, selected) in enumerate(zip(INSPECT, selections)):
+        if args.individual:
+            fig, ax = plt.subplots()
+            ax.set_ylabel(ylabel)
+            ax.set_xlabel(xlabel)
+        # Compare distances to BEST performing data
+        best_index = selected['FLOPS'].argmax()
+        best = selected.iloc[best_index]
+        # TODO: Weight columns by importance
+        best_frame = pd.DataFrame(best.values.reshape((1,-1)), columns=selected.columns).infer_objects()
+        similarities = gower(best_frame[param_cols], selected[param_cols])
+        if args.force_monotonic:
+            similarities = np.atleast_2d(similarities[0, np.argsort(-similarities[0])])
+        line = ax.plot(np.arange(similarities.shape[1]), similarities[0], label=file.parent.stem)
+        dot = ax.scatter(best_index, 0.0, color=line[0].get_color(), marker='*', s=32)
+        if args.individual:
+            ax.legend()
+            fig.savefig(outdir.joinpath(f'{file.parent.stem}{"" if not args.force_monotonic else "_monotonic"}_gower_similarity.png'))
+    if not args.individual:
+        ax.legend()
+        fig.savefig(outdir.joinpath(f'all_{"" if not args.force_monotonic else "monotonic_"}gower_similarity.png'))
+
+if __name__ == '__main__':
+    main()
 
