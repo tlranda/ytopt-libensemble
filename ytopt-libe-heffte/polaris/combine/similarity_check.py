@@ -5,6 +5,7 @@ import itertools
 import matplotlib.pyplot as plt
 import argparse
 from deinterpret import TopologyCache
+from sklearn.ensemble import RandomForestRegressor
 
 def build():
     prs = argparse.ArgumentParser()
@@ -20,6 +21,8 @@ def build():
                      help="Save each figure individually rather than aggregating together (default: %(default)s)")
     prs.add_argument("--force-monotonic", action="store_true",
                      help="Re-sort data for monotonic curve even though this breaks the x-axis meaning (default: %(default)s)")
+    prs.add_argument("--importance-weight", action="store_true",
+                     help="Compute RF feature importance as weights for similarity (default: %(default)s)")
     #prs.add_argument(
     #                 help=" (default: %(default)s)")
     return prs
@@ -194,6 +197,7 @@ def main(args=None):
     args = parse(args)
     INSPECT = sorted(pathlib.Path(f"logs/{args.system}SourceTasks/").glob(f"{args.system}_{args.nodes}n_{args.app}a/manager_results.csv"))
     outdir = pathlib.Path(args.outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
 
     selections = []
     for file in INSPECT:
@@ -216,9 +220,22 @@ def main(args=None):
         # Compare distances to BEST performing data
         best_index = selected['FLOPS'].argmax()
         best = selected.iloc[best_index]
-        # TODO: Weight columns by importance
+        if not args.importance_weight:
+            weights = None
+        else:
+            numeric_only = selected[param_cols] # Numeric columns
+            obj_only = selected['FLOPS']
+            RF = RandomForestRegressor()
+            RF.fit(numeric_only.to_numpy(), obj_only.to_numpy())
+            weights = RF.feature_importances_
         best_frame = pd.DataFrame(best.values.reshape((1,-1)), columns=selected.columns).infer_objects()
-        similarities = gower(best_frame[param_cols], selected[param_cols])
+        similarities = gower(best_frame[param_cols], selected[param_cols], weights=weights)
+        print(file)
+        print("\t"+f"Peak Performance: {best_frame['FLOPS'].values} GFLOP/s @ index {best_index}")
+        print("\t"+f"Using feature weights: {weights}")
+        skip_best_range = [_ for _ in itertools.chain(range(0,best_index), range(best_index+1,len(selected.index)))]
+        print("\t"+f"Similarity range: {similarities[0,skip_best_range].min()} -- {similarities.max()}")
+        print()
         if args.force_monotonic:
             similarities = np.atleast_2d(similarities[0, np.argsort(-similarities[0])])
         line = ax.plot(np.arange(similarities.shape[1]), similarities[0], label=file.parent.stem)
