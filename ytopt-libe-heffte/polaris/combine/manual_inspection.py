@@ -106,6 +106,8 @@ def build():
                      help="Number of zeros to pad application sizes with in filenames (default: %(default)s)")
     prs.add_argument("--transfer-direction", choices=['application', 'nodes', 'both'], default='nodes',
                      help="Indicate transfer direction to correctly select source data (default: %(default)s)")
+    prs.add_argument("--drop", nargs="*", default=None,
+                     help="Directories to not include in globbing based on nodes/class (default: No directories dropped)")
     return prs
 
 def parse(args=None, prs=None):
@@ -115,6 +117,8 @@ def parse(args=None, prs=None):
         args = prs.parse_args()
     args.n_nodes_pad = ("0" * (args.node_pad - len(str(args.n_nodes)))) + str(args.n_nodes)
     args.problem_class_pad = ("0" * (args.problem_pad - len(str(args.problem_class)))) + str(args.problem_class)
+    if args.drop is None:
+        args.drop = []
     return args
 
 def main(args=None):
@@ -128,9 +132,12 @@ def main(args=None):
             continue
         split = str(globbed).split('_')
         nodes, app = int(split[1][:-1]), int(split[2][:-1])
-        if (args.transfer_direction == 'application' and app != args.problem_class and nodes == args.n_nodes) or\
-           (args.transfer_direction == 'nodes' and app == args.problem_class and nodes != args.n_nodes):
+        if ((args.transfer_direction == 'application' and app != args.problem_class and nodes == args.n_nodes) or\
+           (args.transfer_direction == 'nodes' and app == args.problem_class and nodes != args.n_nodes)) and\
+           (len(args.drop) == 0 or not any([globbed.match('*'+drop+'*') for drop in args.drop])):
             source_files.append(globbed.joinpath('manager_results.csv'))
+    print("Source files:")
+    print("\n".join([str(_) for _ in source_files]))
     # Get source data to TL from
     if true_path.joinpath('manager_results.csv').exists:
         true_path = true_path.joinpath('manager_results.csv')
