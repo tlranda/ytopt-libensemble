@@ -38,6 +38,14 @@ def load_csv(name, drop_invalid=False):
     data.insert(len(data.columns), 'source', [name]*len(data))
     return data
 
+def undersample_load(names, ratios):
+    loaded = [load_csv(name) for name in names]
+    combined = []
+    for data, ratio in zip(loaded, ratios):
+        subset = np.sort(np.random.choice(data.index, size=int(len(data.index)*(1.0-ratio)), replace=False))
+        combined.append(data.loc[subset.astype(int)])
+    return pd.concat(combined).reset_index(drop=True)
+
 def GC_SDV(source_dist, quantile, n_nodes=1, ranks_per_node=64, problem_class=64):
     conditions = [Condition({'mpi_ranks': n_nodes * ranks_per_node,
                              'p1': problem_class,},
@@ -108,6 +116,10 @@ def build():
                      help="Indicate transfer direction to correctly select source data (default: %(default)s)")
     prs.add_argument("--drop", nargs="*", default=None,
                      help="Directories to not include in globbing based on nodes/class (default: No directories dropped)")
+    prs.add_argument("--undersample", type=float, default=0.0,
+                     help="Initial ratio for random undersampling (default: %(default)s)")
+    prs.add_argument("--growth-factor", type=float, default=1.0,
+                     help="Growth ratio for undersampling based on distance from target (default: %(default)s)")
     return prs
 
 def parse(args=None, prs=None):
@@ -127,15 +139,39 @@ def main(args=None):
     source_glob = pathlib.Path('logs/ThetaSourceTasks')
     true_path = source_glob.joinpath(f"Theta_{args.n_nodes_pad}n_{args.problem_class_pad}a")
     source_files = []
+    presence = []
     for globbed in source_glob.glob('Theta_*n_*a'):
         if globbed == true_path:
+            presence.append(0)
             continue
         split = str(globbed).split('_')
         nodes, app = int(split[1][:-1]), int(split[2][:-1])
         if ((args.transfer_direction == 'application' and app != args.problem_class and nodes == args.n_nodes) or\
-           (args.transfer_direction == 'nodes' and app == args.problem_class and nodes != args.n_nodes)) and\
-           (len(args.drop) == 0 or not any([globbed.match('*'+drop+'*') for drop in args.drop])):
-            source_files.append(globbed.joinpath('manager_results.csv'))
+           (args.transfer_direction == 'nodes' and app == args.problem_class and nodes != args.n_nodes)):
+            if len(args.drop) != 0 and (any([globbed.match('*'+drop+'*') for drop in args.drop])):
+                presence.append(2)
+            else:
+                presence.append(1)
+                source_files.append(globbed.joinpath('manager_results.csv'))
+        else:
+            presence.append(-1)
+    # Compute offsets for undersampling distances
+    x = np.asarray(presence)
+    xp = np.where(x == 0)[0]
+    y = np.where(x > 0)[0]
+    left = np.where(y < xp)[0]
+    right = np.where(y > xp)[0]
+    ll = np.ones_like(left)
+    rr = np.ones_like(right)
+    for idx in range(len(ll)):
+        ll[:-idx] += 1
+    for idx in range(1,len(rr)):
+        rr[-idx:] += 1
+    multipliers = args.undersample * (args.growth_factor * np.concatenate((ll,rr)))
+    # Adjust for dropped data
+    excluded = np.where(x>1)[0]
+    include_mask = [False if yy in excluded else True for yy in y]
+    multipliers = multipliers[include_mask]
     print("Source files:")
     print("\n".join([str(_) for _ in source_files]))
     # Get source data to TL from
@@ -171,7 +207,7 @@ def main(args=None):
     for col in ['p9']:
         value_dict[col] = (np.append(np.arange(2)/2, 1.0), [2,4])
 
-    source_dist = pd.concat([load_csv(file) for file in source_files]).reset_index(drop=True)
+    source_dist = undersample_load(source_files, multipliers)
     print(f"Loaded {len(source_dist)} values for TL distribution")
 
     # Set up TL model
