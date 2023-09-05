@@ -140,6 +140,10 @@ def build():
                      help="Initial ratio for random undersampling (default: %(default)s)")
     sampling.add_argument("--growth-factor", type=float, default=1.0,
                      help="Growth ratio for undersampling based on distance from target (default: %(default)s)")
+
+    options = prs.add_argument_group('options')
+    options.add_argument("--no-compute", action="store_true",
+                     help="Only load and undersample data (no computation, no charts; default: %(default)s)")
     return prs
 
 def parse(args=None, prs=None):
@@ -160,7 +164,9 @@ def main(args=None):
     true_path = source_glob.joinpath(f"{args.directory_prefix}_{args.n_nodes_pad}n_{args.problem_class_pad}a")
     source_files = []
     presence = []
+    globbing_order = []
     for globbed in source_glob.glob(f'{args.directory_prefix}_*n_*a'):
+        globbing_order.append(globbed)
         # Target can never be included as source data
         if globbed == true_path:
             presence.append(0)
@@ -195,7 +201,10 @@ def main(args=None):
             else:
                 presence.append(-1)
     # Compute offsets for undersampling distances
-    x = np.asarray(presence)
+    # Sort after the fact to make life easy
+    reordering = np.argsort(globbing_order)
+    source_files = np.asarray(sorted(source_files))
+    x = np.asarray(presence)[reordering]
     xp = np.where(x == 0)[0]
     y = np.where(x > 0)[0]
     left = np.where(y < xp)[0]
@@ -211,8 +220,6 @@ def main(args=None):
     excluded = np.where(x>1)[0]
     include_mask = [False if yy in excluded else True for yy in y]
     multipliers = multipliers[include_mask]
-    print("Source files:")
-    print("\n".join([str(_) for _ in source_files]))
     # Get source data to TL from
     if true_path.joinpath('manager_results.csv').exists:
         true_path = true_path.joinpath('manager_results.csv')
@@ -223,7 +230,7 @@ def main(args=None):
         No_True_Path = f"Could not generate a valid path to get true results based on {args.n_nodes} nodes and {args.problem_class} FFT size"
         raise ValueError(No_True_Path)
     truth = load_csv(true_path, drop_invalid=True)
-    print(f"Loaded {len(truth)} values for YTOPT true distribution")
+    print(f"Loaded {len(truth)} values for YTOPT true distribution (From: {true_path})")
     # Filter to what we'd like to see things look like
     quantile = 0.8
     best = truth[truth['FLOPS'] >= truth['FLOPS'].quantile(quantile)]
@@ -248,6 +255,11 @@ def main(args=None):
 
     source_dist = undersample_load(source_files, multipliers)
     print(f"Loaded {len(source_dist)} values for TL distribution")
+    print("Source files and sampling ratios:")
+    print("\n".join([str(file)+f" @ {(1-mult)*100:.2f}%" for (file,mult) in zip(source_files, multipliers)]))
+
+    if args.no_compute:
+        exit()
 
     # Set up TL model
     cond_samples, model = GC_SDV(source_dist, quantile, args.n_nodes, args.ranks_per_node, args.problem_class)
