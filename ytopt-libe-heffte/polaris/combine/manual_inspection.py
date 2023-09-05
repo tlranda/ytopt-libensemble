@@ -102,23 +102,43 @@ def GC_SDV(source_dist, quantile, n_nodes=1, ranks_per_node=64, problem_class=64
 
 def build():
     prs = argparse.ArgumentParser()
-    prs.add_argument("--n-nodes", "--nodes", type=int, default=1,
+
+    target = prs.add_argument_group('target')
+    target.add_argument("--n-nodes", "--nodes", type=int, default=1,
                      help="Target number of nodes for Conditional Sampling (default: %(default)s)")
-    prs.add_argument("--ranks-per-node", "--rpn", type=int, default=64,
+    target.add_argument("--ranks-per-node", "--rpn", type=int, default=64,
                      help="Number of ranks per node to determine MPI ranks based on # nodes (default: %(default)s)")
-    prs.add_argument("--problem-class", "--app-size", type=int, default=64,
+    target.add_argument("--problem-class", "--app-size", type=int, default=64,
                      help="Target application size to predict in Conditional Sampling (default: %(default)s)")
-    prs.add_argument("--node-pad", type=int, default=3,
-                     help="Number of zeros to pad node counts with in filenames (default: %(default)s)")
-    prs.add_argument("--problem-pad", type=int, default=4,
-                     help="Number of zeros to pad application sizes with in filenames (default: %(default)s)")
-    prs.add_argument("--transfer-direction", choices=['application', 'nodes', 'both'], default='nodes',
-                     help="Indicate transfer direction to correctly select source data (default: %(default)s)")
-    prs.add_argument("--drop", nargs="*", default=None,
+
+    transfer = prs.add_argument_group('transfer')
+    transfer.add_argument("--scaling", choices=['strong', 'weak'], default='strong',
+                     help="Dataset selection based on demonstrating this kind of scaling (default: %(default)s)")
+    transfer.add_argument("--strong-direction", choices=['application', 'nodes'], default='nodes',
+                     help="Indicate strong scaling direction for source data for strong scaling (default: %(default)s)")
+    transfer.add_argument("--weak-node-ratio", type=int, default=2,
+                     help="Weak scaling ratio to place between node targets (default: %(default)s)")
+    transfer.add_argument("--weak-app-ratio", type=int, default=2,
+                     help="Weak scaling ratio to place between app targets (default: %(default)s)")
+    transfer.add_argument("--weak-basis", nargs=2, type=int, default=(2, 64),
+                     help="Basis nodes and app for weak scaling ratios to begin from (default: %(default)s)")
+    transfer.add_argument("--drop", nargs="*", default=None,
                      help="Directories to not include in globbing based on nodes/class (default: No directories dropped)")
-    prs.add_argument("--undersample", type=float, default=0.0,
+
+    filesystem = prs.add_argument_group('filesystem')
+    filesystem.add_argument("--node-pad", type=int, default=3,
+                     help="Number of zeros to pad node counts with in filenames (default: %(default)s)")
+    filesystem.add_argument("--problem-pad", type=int, default=4,
+                     help="Number of zeros to pad application sizes with in filenames (default: %(default)s)")
+    filesystem.add_argument("--base-directory", default='logs/ThetaSourceTasks',
+                     help="Directory to crawl for candidate tasks (default: %(default)s)")
+    filesystem.add_argument("--directory-prefix", default="Theta",
+                     help="Prefix for crawled directories (format: {base_directory}/{prefix}_#n_#a) (default prefix: %(default)s)")
+
+    sampling = prs.add_argument_group('sampling')
+    sampling.add_argument("--undersample", type=float, default=0.0,
                      help="Initial ratio for random undersampling (default: %(default)s)")
-    prs.add_argument("--growth-factor", type=float, default=1.0,
+    sampling.add_argument("--growth-factor", type=float, default=1.0,
                      help="Growth ratio for undersampling based on distance from target (default: %(default)s)")
     return prs
 
@@ -136,25 +156,44 @@ def parse(args=None, prs=None):
 def main(args=None):
     args = parse(args)
     # Get the compared distribution and source data files
-    source_glob = pathlib.Path('logs/ThetaSourceTasks')
-    true_path = source_glob.joinpath(f"Theta_{args.n_nodes_pad}n_{args.problem_class_pad}a")
+    source_glob = pathlib.Path(args.base_directory)
+    true_path = source_glob.joinpath(f"{args.directory_prefix}_{args.n_nodes_pad}n_{args.problem_class_pad}a")
     source_files = []
     presence = []
-    for globbed in source_glob.glob('Theta_*n_*a'):
+    for globbed in source_glob.glob(f'{args.directory_prefix}_*n_*a'):
+        # Target can never be included as source data
         if globbed == true_path:
             presence.append(0)
             continue
+        elif len(args.drop) != 0 and (any([globbed.match('*'+drop+'*') for drop in args.drop])):
+            presence.append(2)
+            continue
         split = str(globbed).split('_')
         nodes, app = int(split[1][:-1]), int(split[2][:-1])
-        if ((args.transfer_direction == 'application' and app != args.problem_class and nodes == args.n_nodes) or\
-           (args.transfer_direction == 'nodes' and app == args.problem_class and nodes != args.n_nodes)):
-            if len(args.drop) != 0 and (any([globbed.match('*'+drop+'*') for drop in args.drop])):
-                presence.append(2)
-            else:
+        if args.scaling == 'strong':
+            # Strong scaling requirements:
+            # 1) Transfer direction does NOT match
+            # 2) Non-transfer direction DOES match
+            # 3) Not dropped by the drop list from arguments
+            if ((args.strong_direction == 'application' and app != args.problem_class and nodes == args.n_nodes) or\
+               (args.strong_direction == 'nodes' and app == args.problem_class and nodes != args.n_nodes)):
                 presence.append(1)
                 source_files.append(globbed.joinpath('manager_results.csv'))
+            else:
+                presence.append(-1)
         else:
-            presence.append(-1)
+            # Weak scaling requirements:
+            # 1) Only one dataset per level of transfer direction
+            # 2) Monotonically increasing magnitudes in both directions
+            # 3) Rate of growth per transfer direction should be held constant or near-constant
+            node_divmod = np.divmod(nodes, args.weak_basis[0])
+            app_divmod = np.divmod(app, args.weak_basis[1])
+            if (node_divmod[1] == 0 and app_divmod[1] == 0) and\
+               (node_divmod[0] == app_divmod[0]):
+                presence.append(1)
+                source_files.append(globbed.joinpath('manager_results.csv'))
+            else:
+                presence.append(-1)
     # Compute offsets for undersampling distances
     x = np.asarray(presence)
     xp = np.where(x == 0)[0]
@@ -167,7 +206,7 @@ def main(args=None):
         ll[:-idx] += 1
     for idx in range(1,len(rr)):
         rr[-idx:] += 1
-    multipliers = args.undersample * (args.growth_factor * np.concatenate((ll,rr)))
+    multipliers = np.clip(args.undersample * (args.growth_factor * np.concatenate((ll,rr))), 0, 1)
     # Adjust for dropped data
     excluded = np.where(x>1)[0]
     include_mask = [False if yy in excluded else True for yy in y]
@@ -283,7 +322,7 @@ def main(args=None):
         ax.set_xticklabels(options)
         ax.legend()
         fig.savefig(f"Source_Dist_{col}.png", dpi=400)
-    #plt.show()
+    plt.show()
 
 if __name__ == '__main__':
     main()
