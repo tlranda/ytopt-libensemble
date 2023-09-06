@@ -192,10 +192,24 @@ def main(args=None):
             # 1) Only one dataset per level of transfer direction
             # 2) Monotonically increasing magnitudes in both directions
             # 3) Rate of growth per transfer direction should be held constant or near-constant
-            node_divmod = np.divmod(nodes, args.weak_basis[0])
-            app_divmod = np.divmod(app, args.weak_basis[1])
-            if (node_divmod[1] == 0 and app_divmod[1] == 0) and\
-               (node_divmod[0] == app_divmod[0]):
+            node_quotient, node_remainder = np.divmod(nodes, args.weak_basis[0])
+            app_quotient, app_remainder = np.divmod(app, args.weak_basis[1])
+            node_factor = node_quotient == 1
+            node_power = 0
+            while node_quotient > 1:
+                node_quotient /= args.weak_node_ratio
+                node_factor = node_quotient == 1
+                node_power += 1
+            app_factor = app_quotient == 1
+            app_power = 0
+            while app_quotient > 1:
+                app_quotient /= args.weak_app_ratio
+                app_factor = app_quotient == 1
+                app_power += 1
+            node_factor = node_factor and node_remainder == 0
+            app_factor = app_factor and app_remainder == 0
+            print(globbed, nodes, node_power, node_factor, args.weak_node_ratio, app, app_power, app_factor, args.weak_app_ratio)
+            if node_factor and app_factor and (node_power == app_power):
                 presence.append(1)
                 source_files.append(globbed.joinpath('manager_results.csv'))
             else:
@@ -205,6 +219,7 @@ def main(args=None):
     reordering = np.argsort(globbing_order)
     source_files = np.asarray(sorted(source_files))
     x = np.asarray(presence)[reordering]
+    print("\n".join([f"{a} -- {b}" for a,b in zip(np.asarray(globbing_order).astype(str)[reordering], x)]))
     xp = np.where(x == 0)[0]
     y = np.where(x > 0)[0]
     left = np.where(y < xp)[0]
