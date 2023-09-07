@@ -42,7 +42,7 @@ for rank_idx in ${!weak_dataset[@]}; do
     call="python libEwrapper.py --mpi-ranks ${n_ranks} --worker-timeout 300 --application-scale ${app_scale} --cpu-override 256 --cpu-ranks-per-node 64 --ensemble-workers ${n_workers} --max-evals 30 --configure-environment craympi --machine-identifier theta-knl --system theta --ens-dir-path Theta_Weak_TL_${n_nodes}n_${app_scale}a --ens-template run_gctla.py --ens-script qsub_tl.batch --gc-input ${weak_dataset[@]} --gc-ignore ${left_out} --gc-initial-quantile 1.0 --launch-job --display-results";
     date;
     echo "${call}";
-    #eval "${call}";
+    eval "${call}";
     date;
     calls=$(( ${calls} + 1 ));
 done;
