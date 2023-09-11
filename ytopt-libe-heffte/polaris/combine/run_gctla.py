@@ -270,7 +270,21 @@ if 'ignore' not in user_args.keys() or user_args['ignore'] is None or len(user_a
     user_args['ignore'] = []
 if type(user_args['input']) is str:
     user_args['input'] = [user_args['input']]
-data_files = [_ for _ in user_args['input'] if _ not in user_args['ignore']]
+cand_files = [_ for _ in user_args['input'] if _ not in user_args['ignore']]
+# In case some files are specified that don't exist, emit warning and best-effort continue
+missing, data_files = []
+warned = False
+for cand in cand_files:
+    if pathlib.Path(cand).exists():
+        data_files.append(cand)
+    else:
+        if not warned:
+            print("\n\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n")
+            warned = True
+        print(f"WARNING: Indicated TL source file: {cand} does NOT exist!")
+if warned:
+    print("\n\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n")
+    print("Will continue on best-effort basis with remaining files")
 print(f"GC will be fitted against data from: {data_files}")
 data = pd.concat([pd.read_csv(_) for _ in data_files])
 data_trimmed = data[['c0',]+[f'p{_}' for _ in range(10)]+['mpi_ranks', 'FLOPS']]
