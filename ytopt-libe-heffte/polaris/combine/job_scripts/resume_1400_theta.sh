@@ -9,7 +9,7 @@ source /home/trandall/theta_knl_heffte_env.sh;
 cd /home/trandall/ytune_23/tlranda-ytopt-libensemble/ytopt-libe-heffte/polaris/combine;
 
 app_scales=( 1400 );
-mpi_ranks=( 8192 16384 );
+mpi_ranks=( 8192 );
 # nodes =    128   256
 workers=( 4 );
 # MAX nodes = (64 * 4 + 1) == (256 + 1) = 257 (<6% cluster capacity)
@@ -23,7 +23,7 @@ for n_workers in ${workers[@]}; do
         n_workers=1;
     fi;
     if [[ ${n_ranks} -eq 8192 ]]; then
-        bonus="--resume logs/ThetaSourceTasks/ensemble_Theta_128n_1400a_incomplete/results.csv"
+        bonus="--resume logs/ThetaSourceTasks/Theta_128n_1400a/results.csv"
     else
         bonus="";
     fi
