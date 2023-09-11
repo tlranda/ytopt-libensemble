@@ -272,7 +272,7 @@ if type(user_args['input']) is str:
     user_args['input'] = [user_args['input']]
 cand_files = [_ for _ in user_args['input'] if _ not in user_args['ignore']]
 # In case some files are specified that don't exist, emit warning and best-effort continue
-missing, data_files = []
+data_files = []
 warned = False
 for cand in cand_files:
     if pathlib.Path(cand).exists():
