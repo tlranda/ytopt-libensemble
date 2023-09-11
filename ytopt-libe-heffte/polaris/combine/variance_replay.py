@@ -121,7 +121,7 @@ print("\t", EXPECTED_RUNTIME/3600.0, "(in hours)")
 print()
 
 for idx, (file, selected) in enumerate(zip(TARGET_REPLAY, selections)):
-    print(file, '--', REPEATS * selected["Expected Runtime"].sum())
+    print(idx+1, '/', min(len(selections),len(TARGET_REPLAY)), ":", file, '--', REPEATS * selected["Expected Runtime"].sum())
     new_outname = OUTPUTDIR.joinpath(str(file.parent.stem) + "_variance.csv")
     # Adjustments for plopper as needed
     if selected['p1'].max() < 1024:
@@ -132,18 +132,23 @@ for idx, (file, selected) in enumerate(zip(TARGET_REPLAY, selections)):
     # Make and use the plopper to collect results
     obj = Plopper(plopper_template, str(OUTPUTDIR), template_string)
     flops, elapses = np.zeros((len(selected),3)), np.zeros((len(selected),3))
-    for idx, (pdidx, record) in enumerate(selected.iterrows()):
+    for s_idx, (pdidx, record) in enumerate(selected.iterrows()):
         os.environ["OMP_NUM_THREADS"] = str(record['p9'])
         for repeat in range(REPEATS):
             start_time = time.time()
             record['p9'] = int(record['p9'])
             value = record[param_cols].to_list()
-            flops[idx,repeat] = obj.findRuntime(value, capital_cols,
+            # Need ingrid/outgrid to be on if not empty
+            if value[7] != ' ':
+                value[7] = '-ingrid '+value[7]
+            if value[8] != ' ':
+                value[8] = '-outgrid '+value[8]
+            flops[s_idx,repeat] = obj.findRuntime(value, capital_cols,
                                                 1, 1, 300, # WorkerID, LibE_Workers, app_timeout
                                                 record['mpi_ranks'],
                                                 record['ranks_per_node'],
                                                 1) # n_repeats
-            elapses[idx,repeat] = time.time() - start_time
+            elapses[s_idx,repeat] = time.time() - start_time
     for i in range(REPEATS):
         selected.insert(len(selected.columns), f"FLOPS_REPEAT_{i}", flops[:,i])
         selected.insert(len(selected.columns), f"RUNTIME_REPEAT_{i}", elapses[:,i])
