@@ -239,14 +239,18 @@ class heffte_plopper(LibE_Plopper):
                 config[k] = v.tolist()
         return config
 
-    def floatcast(self, DataFrame, machine_info):
+    def floatcast(self, DataFrame, machine_info, real_topology=False):
         # Return a copy, leave original frame alone
         copied = DataFrame.copy()
 
-        altered_topologies = np.empty((len(DataFrame), len(self.topology_keymap.keys())), dtype=int)
-        altered_sequence = np.empty((len(DataFrame), 1), dtype=int)
-
         sequence = np.asarray(machine_info['sequence'])
+
+        if real_topology:
+            seq_len = 3*(len(str(max(DataFrame['mpi_ranks'])))+1)
+            altered_topologies = np.empty((len(DataFrame), len(self.topology_keymap.keys())), dtype=f"<U{seq_len}")
+        else:
+            altered_topologies = np.empty((len(DataFrame), len(self.topology_keymap.keys())), dtype=int)
+        altered_sequence = np.empty((len(DataFrame), 1), dtype=int)
 
         # Figure out whether P9 is upper/lower case
         p9_key = 'p9' if 'p9' in DataFrame.columns else 'P9'
@@ -263,7 +267,10 @@ class heffte_plopper(LibE_Plopper):
             # Topology
             topology = self.topology_cache[budget]
             # Topology must be differentiably cast, but doesn't need to be representative per se
-            topology = np.arange(len(topology))
+            if real_topology:
+                topology = np.asarray([" ".join([str(v) for v in t]) for t in topology[:-1]]+[topology[-1]])
+            else:
+                topology = np.arange(len(topology))
             for tidx, topology_key in enumerate(topkeys):
                 # Initial selection followed by boundary fixing, then substitute from array
                 # Gaussian Copula CAN over/undersample, so you have to fix that too

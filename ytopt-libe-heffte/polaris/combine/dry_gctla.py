@@ -25,6 +25,9 @@ def build():
     prs.add_argument("--quantile", type=float, help="Quantile to remove from inputs")
     prs.add_argument("--sys", type=int, help="Target system scale")
     prs.add_argument("--app", type=int, help="Target application scale")
+    prs.add_argument("--gpu", action="store_true", help="Indicate GPU availability")
+    prs.add_argument("--cpu-override", type=int, help="Cpu core count override (suggestions: theta=256)")
+    prs.add_argument("--cpu-ranks-per-node", type=int, help="Cpu ranks per node (suggestions: theta=64)")
     return prs
 
 def parse(args=None, prs=None):
@@ -66,9 +69,9 @@ p8 = CSH.UniformFloatHyperparameter(name='p8', lower=0, upper=1)
 p9 = CSH.UniformFloatHyperparameter(name='p9', lower=0, upper=1)
 
 # Cross-architecture is out-of-scope for now so we determine this for the current platform and leave it at that
-cpu_override = None
-gpu_enabled = False
-cpu_ranks_per_node = 1
+cpu_override = None if args.cpu_override is None else args.cpu_override
+gpu_enabled = args.gpu
+cpu_ranks_per_node = args.cpu_ranks_per_node
 
 c0 = CSH.Constant('c0', value='cufft' if gpu_enabled else 'fftw')
 
@@ -196,14 +199,14 @@ warnings.simplefilter('default')
 
 def remove_generated_duplicates(samples, history, dtypes):
     default_machine_info = {'sequence': sequence}
-    casted = problem.plopper.floatcast(samples, default_machine_info)
+    casted = problem.plopper.floatcast(samples, default_machine_info, real_topology=True)
     # Duplicate checking and selection
     casted.insert(0, 'source', ['cast'] * len(casted))
     if len(history) > 0:
         combined = pd.concat((history, casted)).reset_index(drop=False)
     else:
         combined = casted.reset_index(drop=False)
-    match_on = list(set(combined.columns).difference(set(['source'])))
+    match_on = list(set(combined.columns).difference(set(['source', 'index'])))
     duplicated = np.where(combined.duplicated(subset=match_on))[0]
     sample_idx = combined.loc[duplicated]['index']
     combined = combined.drop(index=duplicated)
@@ -212,7 +215,7 @@ def remove_generated_duplicates(samples, history, dtypes):
     else:
         print("No duplicates to remove")
     # Extract non-duplicated samples and ensure history is ready for future iterations
-    samples.drop(index=sample_idx)
+    samples = samples.drop(index=sample_idx)
     combined['source'] = ['history'] * len(combined)
     if 'index' in combined.columns:
         combined = combined.drop(columns=['index'])
@@ -235,7 +238,7 @@ out_dtypes = [
 
 raw_predictions = model.sample_from_conditions(conditions)
 cleaned, history = remove_generated_duplicates(raw_predictions, [], out_dtypes)
-outdir = pathlib.Path('dry_gctla')
+outdir = pathlib.Path('dry')
 outdir.mkdir(parents=True, exist_ok=True)
 cleaned.to_csv(outdir.joinpath('predicted_results.csv'), index=False)
 

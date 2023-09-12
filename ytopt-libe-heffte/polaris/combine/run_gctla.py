@@ -386,7 +386,7 @@ def remove_generated_duplicates(samples, history, dtypes):
     else:
         print("No duplicates to remove")
     # Extract non-duplicated samples and ensure history is ready for future iterations
-    samples.drop(index=sample_idx)
+    samples = samples.drop(index=sample_idx)
     combined['source'] = ['history'] * len(combined)
     if 'index' in combined.columns:
         combined = combined.drop(columns=['index'])
