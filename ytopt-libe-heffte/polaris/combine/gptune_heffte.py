@@ -241,22 +241,46 @@ def main(args=None, prs=None):
     # As such the *S_options define common options when this saves re-specification
 
     # Steal the parameter names / values from Problem object's input space
-    PS_options = [{'name': x,
-                   'transform': 'onehot',
-                   'categories': seqchoice(problem.input_space[x])
-                  } for x in problem.input_space.get_hyperparameter_names()]
-    PS = Space([Categoricalnorm(**options) for options in PS_options])
+    Space_Components = []
+    PS_options = []
+    for param_name, param in problem.input_space.items():
+        opts = {'name': param_name}
+        if type(param) in [CSH.CategoricalHyperparameter, CSH.OrdinalHyperparameter]:
+            opts['transform'] = 'onehot'
+            opts['categories'] = seqchoice(param)
+            PS_type = Categoricalnorm
+        elif type(param) is CSH.Constant:
+            opts['transform'] = 'onehot'
+            opts['categories'] = [param.value]
+            PS_type = Categoricalnorm
+        else:
+            opts['low'] = param.lower
+            opts['high'] = param.upper
+            opts['transform'] = 'identity'
+            opts['prior'] = 'uniform'
+            if type(param) is CSH.UniformFloatHyperparameter:
+                PS_type = Real
+            else:
+                PS_type = Integer
+        PS_options.append(opts)
+        Space_Components.append(PS_type(**opts))
+    PS = Space(Space_Components)
     parameter_space = []
     # Parameter space requires some alteration due to inconsistencies
-    for options in PS_options:
+    for options, obj in zip(PS_options, PS):
         options['transformer'] = options.pop('transform') # REALLY?! Keyname alteration
-        options['type'] = 'categorical' # Bonus key
+        if type(obj) is Real:
+            options['type'] = 'real'
+        elif type(obj) is Integer:
+            options['type'] = 'int'
+        else: # Categoricalnorm
+            options['type'] = 'categorical' # Bonus key
         # Categories key MAY need to become list instead of tuple
         # options['categories'] = list(options['categories'])
         parameter_space.append(options)
 
     # Able to steal this entirely from Problem object API
-    OS = target_problem.output_space
+    OS = problem.output_space
     output_space = [{'name': 'time',
                      'type': 'real',
                      'transformer': 'identity',
@@ -264,6 +288,8 @@ def main(args=None, prs=None):
                      'upper_bound': float('Inf')}]
 
     # Steal input space limits from Problem object API
+    import pdb
+    pdb.set_trace()
     input_space = [{'name': 'isize',
                     'type': 'int',
                     'transformer': 'normalize',
@@ -280,7 +306,7 @@ def main(args=None, prs=None):
                       'modeler': 'Model_GPy_LCM',
                       'input_space': problem.input_space,
                       'output_space': problem.output_space,
-                      'parameter_space': problem.parameter_space,
+                      'parameter_space': parameter_space,
                       'loadable_machine_configurations': {'theta': {'intel': {'nodes': NODE_COUNT, 'cores': threads_per_node}}},
                       'loadable_software_configurations': {}
                      }
