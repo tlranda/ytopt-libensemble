@@ -131,7 +131,7 @@ for idx, (file, selected) in enumerate(zip(TARGET_REPLAY, selections)):
         plopper_template = "./speed3d.sh"
     else:
         plopper_template = "./speed3d_no_gpu_aware.sh"
-        selected.loc[selected.index, 'p1'] = [prec+"-long" if 'long' not in prec else prec for prec in selected['p0']]
+        selected.loc[selected.index, 'p0'] = [prec+"-long" if 'long' not in prec else prec for prec in selected['p0']]
     # Make and use the plopper to collect results
     obj = LibE_Plopper(plopper_template, outputdir=str(OUTPUTDIR), cmd_template=template_string)
     flops, elapses = np.zeros((len(selected),3)), np.zeros((len(selected),3))
