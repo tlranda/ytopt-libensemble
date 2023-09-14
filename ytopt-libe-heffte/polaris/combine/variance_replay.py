@@ -5,7 +5,7 @@ import itertools
 import time
 import os
 
-from plopper import Plopper
+from GC_TLA.base_plopper import LibE_Plopper
 from deinterpret import TopologyCache
 
 OUTPUTDIR = pathlib.Path("Variance_Results")
@@ -120,6 +120,9 @@ print("\t", EXPECTED_RUNTIME/60.0, "(in minutes)")
 print("\t", EXPECTED_RUNTIME/3600.0, "(in hours)")
 print()
 
+sim_order = pd.read_csv("Variance_Results_ordering.csv")
+sim_idx = 0
+
 for idx, (file, selected) in enumerate(zip(TARGET_REPLAY, selections)):
     print(idx+1, '/', min(len(selections),len(TARGET_REPLAY)), ":", file, '--', REPEATS * selected["Expected Runtime"].sum())
     new_outname = OUTPUTDIR.joinpath(str(file.parent.stem) + "_variance.csv")
@@ -130,12 +133,11 @@ for idx, (file, selected) in enumerate(zip(TARGET_REPLAY, selections)):
         plopper_template = "./speed3d_no_gpu_aware.sh"
         selected.loc[selected.index, 'p1'] = [prec+"-long" if 'long' not in prec else prec for prec in selected['p0']]
     # Make and use the plopper to collect results
-    obj = Plopper(plopper_template, str(OUTPUTDIR), template_string)
+    obj = LibE_Plopper(plopper_template, outputdir=str(OUTPUTDIR), cmd_template=template_string)
     flops, elapses = np.zeros((len(selected),3)), np.zeros((len(selected),3))
     for s_idx, (pdidx, record) in enumerate(selected.iterrows()):
         os.environ["OMP_NUM_THREADS"] = str(record['p9'])
         for repeat in range(REPEATS):
-            start_time = time.time()
             record['p9'] = int(record['p9'])
             value = record[param_cols].to_list()
             # Need ingrid/outgrid to be on if not empty
@@ -143,12 +145,34 @@ for idx, (file, selected) in enumerate(zip(TARGET_REPLAY, selections)):
                 value[7] = '-ingrid '+value[7]
             if value[8] != ' ':
                 value[8] = '-outgrid '+value[8]
-            flops[s_idx,repeat] = obj.findRuntime(value, capital_cols,
-                                                1, 1, 300, # WorkerID, LibE_Workers, app_timeout
-                                                record['mpi_ranks'],
-                                                record['ranks_per_node'],
-                                                1) # n_repeats
-            elapses[s_idx,repeat] = time.time() - start_time
+            if sim_idx < len(sim_order):
+                simmed = False
+                lookup = sim_order.loc[sim_idx,'logname'].astype(str)
+                sim_idx += 1
+                # See if simulated already
+                cand = pathlib.Path("Variance_Results/tmp_files_preserve").joinpath(lookup)
+                cand_sh = cand.with_suffix(".sh")
+                cand_log = cand.with_name(lookup+f"_0").with_suffix(".log")
+                if cand_sh.exists() and cand_log.exists():
+                    flops[s_idx,repeat] = obj.getTime(None, # process
+                                                      None, # out pipe
+                                                      None, # error pipe
+                                                      str(cand_sh), # output file
+                                                      0, # attempt
+                                                      {}, # dictVal
+                                                      )
+                    if not np.isnan(flops[s_idx,repeat]):
+                        elapses[s_idx,repeat] = np.nan
+                        simmed = True
+            # Fall back to recollection
+            if not simmed:
+                start_time = time.time()
+                flops[s_idx,repeat] = obj.findRuntime(value, capital_cols,
+                                                    1, 1, 300, # WorkerID, LibE_Workers, app_timeout
+                                                    record['mpi_ranks'],
+                                                    record['ranks_per_node'],
+                                                    1) # n_repeats
+                elapses[s_idx,repeat] = time.time() - start_time
     for i in range(REPEATS):
         selected.insert(len(selected.columns), f"FLOPS_REPEAT_{i}", flops[:,i])
         selected.insert(len(selected.columns), f"RUNTIME_REPEAT_{i}", elapses[:,i])

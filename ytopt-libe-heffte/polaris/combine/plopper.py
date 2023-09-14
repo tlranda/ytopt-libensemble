@@ -50,10 +50,11 @@ class Plopper:
                  stat.S_IRGRP | stat.S_IXGRP |
                  stat.S_IROTH | stat.S_IXOTH)
 
-    def read_logs(self, this_log, workerID):
+    def read_logs(self, this_log, workerID, attempt=0):
         result = None
         try:
-            with open(this_log,"r") as logged:
+            logfile = this_log.rsplit(".",1)[0] + f"_{attempt}.log"
+            with open(logfile,"r") as logged:
                 lines = [_.rstrip() for _ in logged.readlines()]
                 for line in lines:
                     if "Performance: " in line:
