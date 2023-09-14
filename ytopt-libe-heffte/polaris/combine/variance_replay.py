@@ -120,7 +120,7 @@ print("\t", EXPECTED_RUNTIME/60.0, "(in minutes)")
 print("\t", EXPECTED_RUNTIME/3600.0, "(in hours)")
 print()
 
-sim_order = pd.read_csv("Variance_Results_ordering.csv")
+sim_order = pd.DataFrame({})#pd.read_csv("Variance_Results_ordering.csv")
 sim_idx = 0
 
 for idx, (file, selected) in enumerate(zip(TARGET_REPLAY, selections)):
@@ -145,8 +145,8 @@ for idx, (file, selected) in enumerate(zip(TARGET_REPLAY, selections)):
                 value[7] = '-ingrid '+value[7]
             if value[8] != ' ':
                 value[8] = '-outgrid '+value[8]
+            simmed = False
             if sim_idx < len(sim_order):
-                simmed = False
                 lookup = sim_order.loc[sim_idx,'logname'].astype(str)
                 sim_idx += 1
                 # See if simulated already
@@ -163,16 +163,20 @@ for idx, (file, selected) in enumerate(zip(TARGET_REPLAY, selections)):
                                                       )
                     if not np.isnan(flops[s_idx,repeat]):
                         elapses[s_idx,repeat] = np.nan
+                        print(f"Found {cand} for {file} at {idx} / {s_idx} / {pdidx} / {repeat}")
                         simmed = True
             # Fall back to recollection
             if not simmed:
+                #pass
+                #"""
                 start_time = time.time()
                 flops[s_idx,repeat] = obj.findRuntime(value, capital_cols,
-                                                    1, 1, 300, # WorkerID, LibE_Workers, app_timeout
-                                                    record['mpi_ranks'],
-                                                    record['ranks_per_node'],
-                                                    1) # n_repeats
+                                                      1, 1, 300, # WorkerID, LibE_Workers, app_timeout
+                                                      record['mpi_ranks'],
+                                                      record['ranks_per_node'],
+                                                      1) # n_repeats
                 elapses[s_idx,repeat] = time.time() - start_time
+                #"""
     for i in range(REPEATS):
         selected.insert(len(selected.columns), f"FLOPS_REPEAT_{i}", flops[:,i])
         selected.insert(len(selected.columns), f"RUNTIME_REPEAT_{i}", elapses[:,i])
