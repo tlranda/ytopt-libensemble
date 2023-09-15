@@ -53,7 +53,10 @@ class Plopper:
     def read_logs(self, this_log, workerID, attempt=0):
         result = None
         try:
-            logfile = this_log.rsplit(".",1)[0] + f"_{attempt}.log"
+            if this_log.endswith('.sh'):
+                logfile = this_log.rsplit(".",1)[0] + f"_{attempt}.log"
+            else:
+                logfile = this_log
             with open(logfile,"r") as logged:
                 lines = [_.rstrip() for _ in logged.readlines()]
                 for line in lines:

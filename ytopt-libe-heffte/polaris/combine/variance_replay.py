@@ -12,8 +12,9 @@ OUTPUTDIR = pathlib.Path("Variance_Results")
 OUTPUTDIR.mkdir(parents=True,exist_ok=True)
 
 #SYSTEM = "Polaris"
+#template_string = "mpiexec -n {mpi_ranks} --ppn {ranks_per_node} --depth {depth} --cpu-bind depth --env OMP_NUM_THREADS={depth} sh ./set_affinity_gpu_polaris.sh {interimfile}"
 SYSTEM = "Theta"
-template_string = "mpiexec -n {mpi_ranks} --ppn {ranks_per_node} --depth {depth} --cpu-bind depth --env OMP_NUM_THREADS={depth} sh ./set_affinity_gpu_polaris.sh {interimfile}" if SYSTEM == "Polaris" else "aprun -n {mpi_ranks} -N {ranks_per_node} -cc depth -d {depth} -j {j} -e OMP_NUM_THREADS={depth} sh {interimfile}"
+template_string = "aprun -n {mpi_ranks} -N {ranks_per_node} -cc depth -d {depth} -j {j} -e OMP_NUM_THREADS={depth} sh {interimfile}"
 TARGET_REPLAY = sorted(pathlib.Path(f"logs/{SYSTEM}SourceTasks/").glob(f"{SYSTEM}_*n_*a/manager_results.csv"))
 INCREMENT = 0.2
 QUANTILES = np.arange(0,1+INCREMENT,INCREMENT)
@@ -133,7 +134,8 @@ for idx, (file, selected) in enumerate(zip(TARGET_REPLAY, selections)):
         plopper_template = "./speed3d_no_gpu_aware.sh"
         selected.loc[selected.index, 'p0'] = [prec+"-long" if 'long' not in prec else prec for prec in selected['p0']]
     # Make and use the plopper to collect results
-    obj = LibE_Plopper(plopper_template, outputdir=str(OUTPUTDIR), cmd_template=template_string)
+    obj = LibE_Plopper(plopper_template, outputdir=str(OUTPUTDIR), cmd_template=template_string,
+                       force_plot=True, output_extension='.sh')
     flops, elapses = np.zeros((len(selected),3)), np.zeros((len(selected),3))
     for s_idx, (pdidx, record) in enumerate(selected.iterrows()):
         os.environ["OMP_NUM_THREADS"] = str(record['p9'])
@@ -170,6 +172,11 @@ for idx, (file, selected) in enumerate(zip(TARGET_REPLAY, selections)):
                 #pass
                 #"""
                 start_time = time.time()
+                obj.set_architecture_info(threads_per_node=64,
+                                          gpus=0,
+                                          nodes=int(record['mpi_ranks']/64),
+                                          machine_identifier='theta',
+                                          formatSTR=template_string)
                 flops[s_idx,repeat] = obj.findRuntime(value, capital_cols,
                                                       1, 1, 300, # WorkerID, LibE_Workers, app_timeout
                                                       record['mpi_ranks'],
