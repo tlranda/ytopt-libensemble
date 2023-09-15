@@ -35,12 +35,7 @@ def parse(args=None, prs=None):
         args = prs.parse_args()
     return args
 
-def infer_size(fname, lookup_ival):
-    fname = pathlib.Path(fname).stem
-    inv_lookup = dict((v[0], k) for (k,v) in lookup_ival.items())
-    return inv_lookup[fname]
-
-def csvs_to_gptune(fnames, tuning_metadata, lookup_ival):
+def csvs_to_gptune(fnames, tuning_metadata):
     # Top-level JSON info, func_eval will be filled based on data
     json_dict = {'tuning_problem_name': tuning_metadata['tuning_problem_name'],
                  'tuning_problem_category': None,
@@ -59,27 +54,30 @@ def csvs_to_gptune(fnames, tuning_metadata, lookup_ival):
     if type(fnames) is str:
         fnames = [fnames]
     # Prepare return structures
-    sizes = []
-    dicts = []
+    sizes = [] # Task parameter combinations
+    dicts = [] # GPTune-ified data for the task parameter combination
     for fname in fnames:
         # Make basic copy
         gptune_dict = dict((k,v) for (k,v) in json_dict.items())
         csv = pd.read_csv(fname)
         # Only set parameters once -- they'll be consistent throughout different files
         if parameters is None:
-            parameters = [_ for _ in csv.columns if _.startswith('p') and _ != 'predicted']
+            parameters = [_ for _ in csv.columns if (_.startswith('p') or _.startswith('c')) and _ != 'predicted']
+        prev_worker_time = {}
         for index, row in csv.iterrows():
             new_eval = dict((k,v) for (k,v) in func_template.items())
-            try:
-                new_eval['task_parameter'] = {'isize': row['isize']}
-            except KeyError:
-                new_eval['task_parameter'] = {'isize': infer_size(fname, lookup_ival)}
+            new_eval['task_parameter'] = {'nodes': row['mpi_ranks']//64, 'p1': row['p1']}
             # SINGLE update per task size
             if index == 0:
-                sizes.append(new_eval['task_parameter']['isize'])
+                sizes.append(list(new_eval['task_parameter'].values()))
             new_eval['tuning_parameter'] = dict((col, str(row[col])) for col in parameters)
-            new_eval['evaluation_result'] = {'time': row['objective']}
-            new_eval['evaluation_detail'] = {'time': {'evaluations': row['objective'],
+            new_eval['evaluation_result'] = {'flops': row['FLOPS']}
+            elapsed_time = row['elapsed_sec']
+            if row['libE_id'] in prev_worker_time.keys():
+                elapsed_time -= prev_worker_time[row['libE_id']]
+            prev_worker_time[row['libE_id']] = row['elapsed_sec']
+            assert elapsed_time >= 0
+            new_eval['evaluation_detail'] = {'time': {'evaluations': elapsed_time,
                                                       'objective_scheme': 'average'}}
             new_eval['uid'] = uuid.uuid4()
             gptune_dict['func_eval'].append(new_eval)
@@ -132,6 +130,10 @@ def main(args=None, prs=None):
 
     MPI_RANKS = args.sys
     APP_SCALE = args.app
+    #SYSTEM = "Polaris"
+    #template_string = "mpiexec -n {mpi_ranks} --ppn {ranks_per_node} --depth {depth} --cpu-bind depth --env OMP_NUM_THREADS={depth} sh ./set_affinity_gpu_polaris.sh {interimfile}"
+    SYSTEM = "Theta"
+    template_string = "aprun -n {mpi_ranks} -N {ranks_per_node} -cc depth -d {depth} -j {j} -e OMP_NUM_THREADS={depth} sh {interimfile}"
     # Set space and architecture info
     CONFIGSPACE_SEED = 1234
     cs = CS.ConfigurationSpace(seed=CONFIGSPACE_SEED)
@@ -230,6 +232,7 @@ def main(args=None, prs=None):
                                           nodes = NODE_COUNT,
                                           mpi_ranks = MPI_RANKS,
                                           machine_identifier = MACHINE_IDENTIFIER,
+                                          formatSTR = template_string,
                                           )
     problem.set_space(cs)
     warnings.simplefilter('default')
@@ -281,31 +284,40 @@ def main(args=None, prs=None):
 
     # Able to steal this entirely from Problem object API
     OS = problem.output_space
-    output_space = [{'name': 'time',
+    output_space = [{'name': 'flops',
                      'type': 'real',
                      'transformer': 'identity',
-                     'lower_bound': float(0.0),
-                     'upper_bound': float('Inf')}]
+                     'lower_bound': float('-Inf'),
+                     'upper_bound': float('3.0')}]
 
     # Steal input space limits from Problem object API
-    import pdb
-    pdb.set_trace()
-    input_space = [{'name': 'isize',
+    # Tuple is (NODES, APP)
+    input_space = [{'name': 'nodes',
                     'type': 'int',
                     'transformer': 'normalize',
-                    'lower_bound': min(problem.dataset_lookup.keys()),
-                    'upper_bound': max(problem.dataset_lookup.keys())}]
-    IS = Space([Integer(low=problem.input_space[0]['lower_bound'],
-                        high=problem.input_space[0]['upper_bound'],
+                    'lower_bound': min([tup[0] for tup in problem.dataset_lookup.keys()]),
+                    'upper_bound': max([tup[0] for tup in problem.dataset_lookup.keys()]),},
+                   {'name': 'p1',
+                    'type': 'int',
+                    'transformer': 'normalize',
+                    'lower_bound': min([tup[1] for tup in problem.dataset_lookup.keys()]),
+                    'upper_bound': max([tup[1] for tup in problem.dataset_lookup.keys()]),},
+                   ]
+    IS = Space([Integer(low=input_space[0]['lower_bound'],
+                        high=input_space[0]['upper_bound'],
                         transform='normalize',
-                        name='isize')])
+                        name='nodes'),
+                Integer(low=input_space[1]['lower_bound'],
+                        high=input_space[1]['upper_bound'],
+                        transform='normalize',
+                        name='p1'),])
 
     # Meta Dicts are part of building surrogate models for each input, but have a lot of common
     # specification templated here
     base_meta_dict = {'tuning_problem_name': problem.name.split('Problem')[0][:-1].replace('/','__'),
                       'modeler': 'Model_GPy_LCM',
-                      'input_space': problem.input_space,
-                      'output_space': problem.output_space,
+                      'input_space': input_space,
+                      'output_space': output_space,
                       'parameter_space': parameter_space,
                       'loadable_machine_configurations': {'theta': {'intel': {'nodes': NODE_COUNT, 'cores': threads_per_node}}},
                       'loadable_software_configurations': {}
@@ -328,14 +340,14 @@ def main(args=None, prs=None):
     constraints = {}
     objectives = problem.objective
     # Load prior evaluations in GPTune-ready format
-    prior_traces, prior_sizes = csvs_to_gptune(args.inputs, tuning_metadata, problem.lookup_ival)
+    prior_traces, prior_sizes = csvs_to_gptune(args.inputs, tuning_metadata)
     # Teach GPTune about these prior evaluations
     surrogate_metadata = dict((k,v) for (k,v) in base_meta_dict.items())
     model_functions = {}
     import pdb
     pdb.set_trace()
     for size, data in zip(prior_sizes, prior_traces):
-        surrogate_metadata['task_parameter'] = [[size]]
+        surrogate_metadata['task_parameter'] = [size]
         model_functions[size] = BuildSurrogateModel(problem_space=surrogate_metadata,
                                                     modeler=surrogate_metadata['modeler'],
                                                     input_task=surrogate_metadata['task_parameter'],
