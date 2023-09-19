@@ -151,6 +151,8 @@ def merge(_from, _to):
                 else:
                     rel_path = pathlib.Path(*remain.relative_to(fromdir).parts)
                     dest = version(todir.joinpath(rel_path))
+                    # Sometimes directory structure isn't already copied over
+                    dest.parent.mkdir(parents=True, exist_ok=True)
                     remain.rename(dest)
                     change_record[todir].append(('cleanup', str(dest), [str(remain)]))
                     print(change_record[todir][-1])
