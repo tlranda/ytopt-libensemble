@@ -25,6 +25,7 @@ def build():
     prs.add_argument("--inputs", type=str, nargs="+", required=True, help="Input files to learn from")
     prs.add_argument("--sys", type=int, required=True, help="System scale to target (mpi_ranks)")
     prs.add_argument("--app", type=int, required=True, help="Application scale to target (fft size)")
+    prs.add_argument("--log", required=True, help="File to log results to as CSV")
     prs.add_argument("--max-evals", type=int, default=30, help="Number of evaluations per task")
     prs.add_argument("--n-init", type=int, default=-1, help="Number of initial evaluations (blind)")
     prs.add_argument("--seed", type=int, default=1234, help="RNG seed")
@@ -237,6 +238,7 @@ def main(args=None, prs=None):
     scale_name = gc_tla_problem.lookup_ival[(args.sys, args.app)]
     warnings.simplefilter('ignore')
     problem = getattr(gc_tla_problem, scale_name)
+    problem.selflog = args.log
     problem.plopper.returnmode = 'GPTune'
     problem.plopper.set_architecture_info(threads_per_node = ranks_per_node,
                                           gpus = ranks_per_node if gpu_enabled else 0,
