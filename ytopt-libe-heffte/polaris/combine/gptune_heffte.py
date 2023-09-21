@@ -13,15 +13,18 @@ import numpy as np, pandas as pd, uuid, time, copy
 
 import gc_tla_problem
 import warnings
+# GPTune nearly breaks a TON of numpy and scikit-learn APIs and already relies on deprecated behavior
+# Feel free to unsuppress warnings and fix, but be warned, there are a LOT of them
+warnings.simplefilter('ignore')
 import ConfigSpace as CS
 import ConfigSpace.hyperparameters as CSH
 from ConfigSpace import ConfigurationSpace, EqualsCondition
 
 def build():
     prs = argparse.ArgumentParser()
-    prs.add_argument("--inputs", type=str, nargs="+", help="Input files to learn from")
-    prs.add_argument("--sys", type=int, help="System scale to target")
-    prs.add_argument("--app", type=int, help="Application scale to target")
+    prs.add_argument("--inputs", type=str, nargs="+", required=True, help="Input files to learn from")
+    prs.add_argument("--sys", type=int, required=True, help="System scale to target (mpi_ranks)")
+    prs.add_argument("--app", type=int, required=True, help="Application scale to target (fft size)")
     prs.add_argument("--max-evals", type=int, default=30, help="Number of evaluations per task")
     prs.add_argument("--n-init", type=int, default=-1, help="Number of initial evaluations (blind)")
     prs.add_argument("--seed", type=int, default=1234, help="RNG seed")
@@ -66,7 +69,7 @@ def csvs_to_gptune(fnames, tuning_metadata):
         prev_worker_time = {}
         for index, row in csv.iterrows():
             new_eval = dict((k,v) for (k,v) in func_template.items())
-            new_eval['task_parameter'] = {'nodes': row['mpi_ranks']//64, 'p1': row['p1']}
+            new_eval['task_parameter'] = {'mpi_ranks': row['mpi_ranks'], 'p1': row['p1']}
             # SINGLE update per task size
             if index == 0:
                 sizes.append(list(new_eval['task_parameter'].values()))
@@ -85,14 +88,22 @@ def csvs_to_gptune(fnames, tuning_metadata):
         print(f"GPTune-ified {fname}")
     return dicts, sizes
 
-def wrap_objective(objective, surrogate_to_size_dict):
+def wrap_objective(objective, surrogate_to_size_dict, task_keys, machine_info):
+    objective.__self__.returnmode = 'GPTune'
     def new_objective(point: dict):
         # Task identifier is 'isize'
-        task = point['isize']
+        task = tuple([point[key] for key in task_keys])
         if task in surrogate_to_size_dict.keys():
+            # For whatever reason, I have GPTune treating P1 categories as strings so you
+            # have to honor that and cast the key-value to string
+            point['p1'] = str(point['p1'])
             result = surrogate_to_size_dict[task](point)
+            # GPTune expects a time component -- just dupe our FOM in there
+            result['time'] = result['flops']
             # NO NEED TO LOG RESULTS
         else:
+            # Add machine info here
+            point['machine_info'] = machine_info
             # Should auto-log results
             result = objective(point)
             # BUG: GPTune's second configuration is unique despite same seed/input. Attempt static eval
@@ -234,6 +245,16 @@ def main(args=None, prs=None):
                                           machine_identifier = MACHINE_IDENTIFIER,
                                           formatSTR = template_string,
                                           )
+    machine_info = {
+        'identifier': MACHINE_IDENTIFIER,
+        'mpi_ranks': MPI_RANKS,
+        'threads_per_node': ranks_per_node,
+        'ranks_per_node': ranks_per_node,
+        'gpu_enabled': gpu_enabled,
+        'libE_workers': 1,
+        'app_timeout': 300,
+        'sequence': sequence,
+    }
     problem.set_space(cs)
     warnings.simplefilter('default')
     # Next build the actual instance for evaluating the target problem
@@ -244,6 +265,7 @@ def main(args=None, prs=None):
     # As such the *S_options define common options when this saves re-specification
 
     # Steal the parameter names / values from Problem object's input space
+    # HOWEVER, the p1 parameter which is a constant must be replaced with the FULL space representation!!!
     Space_Components = []
     PS_options = []
     for param_name, param in problem.input_space.items():
@@ -254,8 +276,16 @@ def main(args=None, prs=None):
             PS_type = Categoricalnorm
         elif type(param) is CSH.Constant:
             opts['transform'] = 'onehot'
-            opts['categories'] = [param.value]
             PS_type = Categoricalnorm
+            if param_name == 'p1':
+                # Replace constant with full range of options
+                opts['categories'] = ('64','128','256','512','1024','1400',)
+            elif param_name == 'c0':
+                # Replace constant with full range of options
+                opts['categories'] = ('cufft',) if gpu_enabled else ('fftw',)
+            else:
+                # Actual constant
+                opts['categories'] = (param.value,)
         else:
             opts['low'] = param.lower
             opts['high'] = param.upper
@@ -292,11 +322,11 @@ def main(args=None, prs=None):
 
     # Steal input space limits from Problem object API
     # Tuple is (NODES, APP)
-    input_space = [{'name': 'nodes',
+    input_space = [{'name': 'mpi_ranks',
                     'type': 'int',
                     'transformer': 'normalize',
-                    'lower_bound': min([tup[0] for tup in problem.dataset_lookup.keys()]),
-                    'upper_bound': max([tup[0] for tup in problem.dataset_lookup.keys()]),},
+                    'lower_bound': int(min([tup[0]*ranks_per_node for tup in problem.dataset_lookup.keys()])),
+                    'upper_bound': int(max([tup[0]*ranks_per_node for tup in problem.dataset_lookup.keys()])),},
                    {'name': 'p1',
                     'type': 'int',
                     'transformer': 'normalize',
@@ -306,7 +336,7 @@ def main(args=None, prs=None):
     IS = Space([Integer(low=input_space[0]['lower_bound'],
                         high=input_space[0]['upper_bound'],
                         transform='normalize',
-                        name='nodes'),
+                        name='mpi_ranks'),
                 Integer(low=input_space[1]['lower_bound'],
                         high=input_space[1]['upper_bound'],
                         transform='normalize',
@@ -344,15 +374,14 @@ def main(args=None, prs=None):
     # Teach GPTune about these prior evaluations
     surrogate_metadata = dict((k,v) for (k,v) in base_meta_dict.items())
     model_functions = {}
-    import pdb
-    pdb.set_trace()
     for size, data in zip(prior_sizes, prior_traces):
         surrogate_metadata['task_parameter'] = [size]
-        model_functions[size] = BuildSurrogateModel(problem_space=surrogate_metadata,
+        print(f"Build Surrogate model for size {size}")
+        model_functions[tuple(size)] = BuildSurrogateModel(problem_space=surrogate_metadata,
                                                     modeler=surrogate_metadata['modeler'],
                                                     input_task=surrogate_metadata['task_parameter'],
                                                     function_evaluations=data['func_eval'])
-    wrapped_objectives = wrap_objective(objectives, model_functions)
+    wrapped_objectives = wrap_objective(objectives, model_functions, task_keys=['mpi_ranks','p1'], machine_info=machine_info)
     #func_evals = []
     #for prior_data in prior_traces:
     #    func_evals.extend(prior_data['func_eval'])
@@ -387,16 +416,19 @@ def main(args=None, prs=None):
     # Set up the actual transfer learning task
     # THIS is what GPTune's HistoryDB says you should do for TLA; same # evals in all problems,
     # but leverage model functions on prior tasks to simulate their results
-    transfer_task = [[problem.problem_class]]
-    transfer_task.extend([[s] for s in prior_sizes])
-    if args.ninit == -1:
-        NS1 = max(args.nrun//2,1)
+    transfer_task = [list(problem.problem_class)]
+    # The problem class indicates # nodes, not # mpi ranks; we need the latter
+    transfer_task[0][0] *= ranks_per_node
+    transfer_task.extend([s for s in prior_sizes])
+    n_task = len(transfer_task)
+    if args.n_init == -1:
+        NS1 = max(args.max_evals//2,1)
     else:
-        NS1 = args.ninit
-    data, modeler, stats = gt.MLA(Tgiven=transfer_task, NS=args.nrun, NI=len(transfer_task),
-                                  NS1=NS1)
+        NS1 = args.n_init
+    data, modeler, stats = gt.MLA(Tgiven=transfer_task, NS=args.max_evals, NI=n_task, NS1=NS1)
     print(f"Stats: {stats}")
 
 if __name__ == "__main__":
+    warnings.simplefilter('ignore')
     main()
 
