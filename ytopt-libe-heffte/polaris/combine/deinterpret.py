@@ -44,6 +44,7 @@ def build():
     prs.add_argument('--cols', nargs="*", default=None, help="Columns to show in CSV printing routines (default: ALL)")
     prs.add_argument('--show', action='store_true', help="Print de-interpreted CSV")
     prs.add_argument('--unique-show', action='store_true', help="Print uniques from de-interpreted CSV")
+    prs.add_argument('--unique-all', action='store_true', help="ALWAYS show min/mean/max/variance breakdown, even for unique records")
     prs.add_argument('--enumerate', action='store_true', help="Count number of times each option represented in a CSV column appears")
     prs.add_argument('--save', nargs="+", default=None, help="Save each input CSV to a name (must be 1:1 with # of args to --csv)")
     prs.add_argument('--auto', default=None, help="Automatic renaming for CSV saving (not used by default; this suffix is added to filenames before the extension)")
@@ -174,6 +175,8 @@ def deinterpret(csvs, names, args):
                 n_matching = (dupes[param_cols] == search_tup).sum(1)
                 full_matches = np.where(n_matching == len(param_cols))[0]
                 flops = np.append(row['FLOPS'], dupes.loc[dupes.index[full_matches], 'FLOPS'].values)
+                if len(flops) == 1 and not args.unique_all:
+                    continue
                 print(f"{row.to_frame().T[param_cols]} appears {len(flops)} times in the records")
                 print("\t"+f"Min FLOPS: {flops.min()}")
                 print("\t"+f"Mean FLOPS: {flops.mean()}")
