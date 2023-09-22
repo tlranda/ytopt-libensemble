@@ -41,7 +41,9 @@ def build():
     prs = argparse.ArgumentParser()
     prs.add_argument('--csv', nargs="+", default=None, help="CSVs to de-interpret")
     prs.add_argument('--count-collisions', action='store_true', help="Determine number of identical records post-interpretation")
-    prs.add_argument('--show', action='store_true', help="Print de-interpreted CSv")
+    prs.add_argument('--cols', nargs="*", default=None, help="Columns to show in CSV printing routines (default: ALL)")
+    prs.add_argument('--show', action='store_true', help="Print de-interpreted CSV")
+    prs.add_argument('--unique-show', action='store_true', help="Print uniques from de-interpreted CSV")
     prs.add_argument('--enumerate', action='store_true', help="Count number of times each option represented in a CSV column appears")
     prs.add_argument('--save', nargs="+", default=None, help="Save each input CSV to a name (must be 1:1 with # of args to --csv)")
     prs.add_argument('--auto', default=None, help="Automatic renaming for CSV saving (not used by default; this suffix is added to filenames before the extension)")
@@ -61,7 +63,7 @@ def parse(args=None, prs=None):
             p = pathlib.Path(name)
             args.save.append(p.with_stem(p.stem+args.auto))
     # List-ify if only one argument is present
-    for name in ['csv', 'save']:
+    for name in ['csv', 'save', 'cols']:
         local = getattr(args, name)
         if type(local) is str:
             setattr(args, name, [local])
@@ -145,7 +147,38 @@ def deinterpret(csvs, names, args):
             print(f"{name} Collions: {original_len} --> {len(csv.drop_duplicates(subset=param_cols))}")
         if args.show:
             print(name)
-            print(csv)
+            if args.cols is None:
+                print(csv)
+            else:
+                disp_cols = [_ for _ in args.cols if _ in csv.columns]
+                mismatch = set(args.cols).difference(disp_cols)
+                if len(mismatch) > 0:
+                    print(f"The following columns were not found and cannot be printed: {sorted(mismatch)}")
+                print(csv[disp_cols])
+        if args.unique_show:
+            print(name)
+            param_cols = [f'p{_}' for _ in range(10)]+['c0']
+            no_dupes = csv.drop_duplicates(subset=param_cols)
+            dupes = csv[csv.duplicated(subset=param_cols)]
+            if args.cols is None:
+                print(no_dupes)
+            else:
+                disp_cols = [_ for _ in args.cols if _ in csv.columns]
+                mismatch = set(args.cols).difference(disp_cols)
+                if len(mismatch) > 0:
+                    print(f"The following columns were not found and cannot be printed: {sorted(mismatch)}")
+                print(no_dupes[disp_cols])
+            for (iterdx, row) in no_dupes.iterrows():
+                # Get the dupes that match this row
+                search_tup = tuple(row[param_cols].values)
+                n_matching = (dupes[param_cols] == search_tup).sum(1)
+                full_matches = np.where(n_matching == len(param_cols))[0]
+                flops = np.append(row['FLOPS'], dupes.loc[dupes.index[full_matches], 'FLOPS'].values)
+                print(f"{row.to_frame().T[param_cols]} appears {len(flops)} times in the records")
+                print("\t"+f"Min FLOPS: {flops.min()}")
+                print("\t"+f"Mean FLOPS: {flops.mean()}")
+                print("\t"+f"Max FLOPS: {flops.max()}")
+                print("\t"+f"Var FLOPS: {flops.std()}")
         if save is not None:
             csv.to_csv(save, index=False)
         if args.enumerate:
