@@ -26,10 +26,10 @@ def build():
     prs.add_argument("--sys", type=int, required=True, help="System scale to target (mpi_ranks)")
     prs.add_argument("--app", type=int, required=True, help="Application scale to target (fft size)")
     prs.add_argument("--log", required=True, help="File to log results to as CSV")
-    prs.add_argument("--max-evals", type=int, default=30, help="Number of evaluations per task")
-    prs.add_argument("--n-init", type=int, default=-1, help="Number of initial evaluations (blind)")
-    prs.add_argument("--seed", type=int, default=1234, help="RNG seed")
-    prs.add_argument("--preserve-history", action="store_true", help="Prevent existing gptune history files from reuse/clobbering")
+    prs.add_argument("--max-evals", type=int, default=30, help="Number of evaluations per task (default: %(default)s)")
+    prs.add_argument("--n-init", type=int, default=-1, help="Number of initial evaluations (blind) (default: Use half of <max-evals>)")
+    prs.add_argument("--seed", type=int, default=1234, help="RNG seed (default: %(default)s)")
+    prs.add_argument("--preserve-history", action="store_true", help="Prevent existing gptune history files from reuse/clobbering when specified")
     return prs
 
 def parse(args=None, prs=None):

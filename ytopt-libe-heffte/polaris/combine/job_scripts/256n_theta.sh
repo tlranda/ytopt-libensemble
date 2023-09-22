@@ -8,7 +8,7 @@
 source /home/trandall/theta_knl_heffte_env.sh;
 cd /home/trandall/ytune_23/tlranda-ytopt-libensemble/ytopt-libe-heffte/polaris/combine;
 
-app_scales=( 512 1024 1400 );
+app_scales=( 1024 1400 );
 mpi_ranks=( 16384 );
 #mpi_ranks=( 64 128 256 512 1024 2048 4096 8192 16384 );
 # nodes =    1   2   4   8   16   32   64  128    256
@@ -19,8 +19,8 @@ calls=0;
 for app_scale in ${app_scales[@]}; do
 for n_ranks in ${mpi_ranks[@]}; do
 for n_workers in ${workers[@]}; do
-    if [[ ${app_scale} -eq 512 ]]; then
-        bonus="--resume Theta_256n_0512a/results.csv";
+    if [[ ${app_scale} -eq 1024 ]]; then
+        bonus="--resume Theta_256n_1024a_PARTIAL/results.csv";
     else
         bonus="";
     fi;
