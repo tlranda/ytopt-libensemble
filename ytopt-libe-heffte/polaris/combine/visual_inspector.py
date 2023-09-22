@@ -14,7 +14,7 @@ def build(prs=None):
     prs.add_argument("--crawl-directory", "--crawl-directories", nargs="*", help="Directories to crawl for subdirectory names (default: None)")
     prs.add_argument("--highlight", type=int, default=-1, help="Focus results on the nth (0-indexed) directory (default: ALL directories)")
     prs.add_argument("--save", default=None, help="Save figure rather than display (to this path, if given)")
-    prs.add_argument("--quantile", type=float, nargs='*', default=0.5, help="Quantile to indicate (per directory, if more than one specified)")
+    prs.add_argument("--quantile", type=float, nargs='*', default=0.5, help="Quantile to indicate (per directory, if more than one specified; default: %(default)s)")
     prs.add_argument("--timeout", type=float, default=20.0, help="Virtual timeout to include on graph (default: %(default)s)")
     prs.add_argument("--drop-failures", action="store_true", help="Omit failures from the plot")
     prs.add_argument("--flops-only", action="store_true", help="Drop runtime from the plots")
