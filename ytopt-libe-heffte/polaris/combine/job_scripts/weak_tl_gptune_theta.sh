@@ -1,6 +1,6 @@
 #!/bin/bash 
 #COBALT -t 06:00:00
-#COBALT -n 129
+#COBALT -n 256
 #COBALT --attrs filesystems=home
 #COBALT -A EE-ECP
 #COBALT -q default
@@ -34,6 +34,11 @@ for rank_index in ${!app_scales[@]}; do
 done;
 
 for rank_idx in ${!weak_dataset[@]}; do
+    # Skip ones already collected, but need to keep values in the list to properly construct
+    # the inputs
+    if [[ ${rank_idx} -eq 0 ]]; then
+        continue;
+    fi
     left_out=${weak_dataset[$rank_idx]};
     n_ranks=${mpi_ranks[$rank_idx]};
     n_nodes=${n_nodes[$rank_idx]};
@@ -41,10 +46,15 @@ for rank_idx in ${!weak_dataset[@]}; do
     localized_dataset=("${weak_dataset[@]}")
     unset localized_dataset[$rank_idx]
     echo "Calling on ${n_workers} workers with ${n_ranks} mpi ranks (${n_nodes} nodes) per worker for size ${app_scale}";
+    # Aggregate things safely here:
+    store_dir=GPTune_Results/Theta_${n_nodes}n_${app_scale}a;
+    mkdir -p ${store_dir};
     call="python gptune_heffte.py --sys ${n_ranks} --app ${app_scale} --max-evals 30 --preserve-history --inputs ${localized_dataset[@]} --log gptune_${n_nodes}n_${app_scale}a.csv";
     date;
     echo "${call}";
     eval "${call}";
+    mv gptune_${n_nodes}n_${app_scale}a.csv ${store_dir};
+    mv tmp_files ${store_dir};
     date;
     calls=$(( ${calls} + 1 ));
 done;
