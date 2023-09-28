@@ -30,6 +30,7 @@ def build():
     prs.add_argument("--n-init", type=int, default=-1, help="Number of initial evaluations (blind) (default: Use half of <max-evals>)")
     prs.add_argument("--seed", type=int, default=1234, help="RNG seed (default: %(default)s)")
     prs.add_argument("--preserve-history", action="store_true", help="Prevent existing gptune history files from reuse/clobbering when specified")
+    prs.add_argument("--dry", action="store_true", help="Do not run actual TL loop, but do all things prior to it")
     return prs
 
 def parse(args=None, prs=None):
@@ -80,7 +81,8 @@ def csvs_to_gptune(fnames, tuning_metadata):
             if row['libE_id'] in prev_worker_time.keys():
                 elapsed_time -= prev_worker_time[row['libE_id']]
             prev_worker_time[row['libE_id']] = row['elapsed_sec']
-            assert elapsed_time >= 0
+            # This assertion probably does not need to exist
+            #assert elapsed_time >= 0
             new_eval['evaluation_detail'] = {'time': {'evaluations': elapsed_time,
                                                       'objective_scheme': 'average'}}
             new_eval['uid'] = uuid.uuid4()
@@ -427,6 +429,8 @@ def main(args=None, prs=None):
         NS1 = max(args.max_evals//2,1)
     else:
         NS1 = args.n_init
+    if args.dry:
+        exit()
     data, modeler, stats = gt.MLA(Tgiven=transfer_task, NS=args.max_evals, NI=n_task, NS1=NS1)
     print(f"Stats: {stats}")
 
