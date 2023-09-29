@@ -72,7 +72,7 @@ def load(args):
         # Reordering to ensure mathematical correctness
         frame = frame.sort_values(by=['elapsed_sec', 'libE_id', ])
         # Elapsed time is difference between INDIVIDUAL WORKER'S previous timesteps
-        prev_worker_time = dict((v+2, 0) for v in range(max_workers))
+        prev_worker_time = dict((v, 0) for v in sorted(set(frame['libE_id'].values)))
         elapsed_diff = []
         for idx, record in frame.iterrows():
             diff = record['elapsed_sec'] - prev_worker_time[record['libE_id']]
