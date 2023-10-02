@@ -143,6 +143,7 @@ def main(args=None, prs=None):
     np.random.seed(args.seed)
 
     MPI_RANKS = args.sys
+    args.nodes = MPI_RANKS // 64
     APP_SCALE = args.app
     #SYSTEM = "Polaris"
     #template_string = "mpiexec -n {mpi_ranks} --ppn {ranks_per_node} --depth {depth} --cpu-bind depth --env OMP_NUM_THREADS={depth} sh ./set_affinity_gpu_polaris.sh {interimfile}"
@@ -237,7 +238,8 @@ def main(args=None, prs=None):
     MACHINE_IDENTIFIER = "theta-knl"
 
     # Create a problem instance
-    scale_name = gc_tla_problem.lookup_ival[(args.sys, args.app)]
+    # Don't look up directly via args.sys, but by # nodes
+    scale_name = gc_tla_problem.lookup_ival[(args.nodes, args.app)]
     warnings.simplefilter('ignore')
     problem = getattr(gc_tla_problem, scale_name)
     problem.selflog = args.log
