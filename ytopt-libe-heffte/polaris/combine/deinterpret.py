@@ -42,6 +42,8 @@ def build():
     prs.add_argument('--csv', nargs="+", default=None, help="CSVs to de-interpret")
     prs.add_argument('--count-collisions', action='store_true', help="Determine number of identical records post-interpretation")
     prs.add_argument('--cols', nargs="*", default=None, help="Columns to show in CSV printing routines (default: ALL)")
+    prs.add_argument('--sort-flops', action='store_true', help="Sort rows by flops column (default: no sorting)")
+    prs.add_argument('--pandas-display', type=int, default=pd.get_option('display.max_rows'), help='Change number of rows pandas prints before omitting results (default: %(default)s)')
     prs.add_argument('--show', action='store_true', help="Print de-interpreted CSV")
     prs.add_argument('--unique-show', action='store_true', help="Print uniques from de-interpreted CSV")
     prs.add_argument('--unique-all', action='store_true', help="ALWAYS show min/mean/max/variance breakdown, even for unique records")
@@ -148,6 +150,8 @@ def deinterpret(csvs, names, args):
             print(f"{name} Collions: {original_len} --> {len(csv.drop_duplicates(subset=param_cols))}")
         if args.show:
             print(name)
+            if args.sort_flops and 'FLOPS' in csv.columns:
+                csv = csv.sort_values(by=['FLOPS'])
             if args.cols is None:
                 print(csv)
             else:
@@ -161,6 +165,8 @@ def deinterpret(csvs, names, args):
             param_cols = [f'p{_}' for _ in range(10)]+['c0']
             no_dupes = csv.drop_duplicates(subset=param_cols)
             dupes = csv[csv.duplicated(subset=param_cols)]
+            if args.sort_flops and 'FLOPS' in no_dupes.columns:
+                no_dupes = no_dupes.sort_values(by=['FLOPS'])
             if args.cols is None:
                 print(no_dupes)
             else:
@@ -197,6 +203,8 @@ def deinterpret(csvs, names, args):
 
 def main(args=None):
     args = parse(args)
+    pd.set_option('display.min_rows', args.pandas_display)
+    pd.set_option('display.max_rows', args.pandas_display)
     csvs = []
     names = []
     for name in args.csv:
