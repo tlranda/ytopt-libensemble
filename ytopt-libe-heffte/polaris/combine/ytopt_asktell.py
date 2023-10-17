@@ -21,7 +21,7 @@ def persistent_ytopt(H, persis_info, gen_specs, libE_info):
     calc_in = None
     first_call = True
     first_write = True
-    fields = [i[0] for i in gen_specs['out']]
+    optimizer_fields = [i[0] for i in gen_specs['out']]
     _iter = 0
 
     # Send batches until manager sends stop tag
@@ -36,7 +36,7 @@ def persistent_ytopt(H, persis_info, gen_specs, libE_info):
             results = []
             for entry in calc_in:
                 field_params = {}
-                for field in fields:
+                for field in optimizer_fields:
                     field_params[field] = entry[field][0]
                 results += [(field_params, entry['FLOPS'][0])]
             #print('results: ', results)

@@ -37,7 +37,6 @@ def init_obj(H, persis_info, sim_specs, libE_info):
 
     return H_o, persis_info
 
-candidate_orders = [_ for _ in itertools.product([0,1,2], repeat=3) if len(_) == len(set(_))]
 topology_keymap = {'p7': '-ingrid', 'p8': '-outgrid'}
 topology_cache = {}
 def make_topology(budget: int) -> list[tuple[int,int,int]]:
@@ -46,9 +45,7 @@ def make_topology(budget: int) -> list[tuple[int,int,int]]:
     topology = []
     for candidate in itertools.product(factors, repeat=3):
         # All topologies need to have product that == budget
-        # Reordering the topology is not considered a relevant difference, so reorderings are discarded
-        if np.prod(candidate) != budget or \
-           np.any([tuple([candidate[_] for _ in order]) in topology for order in candidate_orders]):
+        if np.prod(candidate) != budget:
             continue
         topology.append(candidate)
     # Add the null space

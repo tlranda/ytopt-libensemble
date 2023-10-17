@@ -91,7 +91,9 @@ libE_specs['ensemble_dir_path'] = f'./ensemble_{ENSEMBLE_DIR_PATH}'
 print(f"This ensemble operates as: {libE_specs['ensemble_dir_path']}"+"\n")
 
 # Variables that will be sed-edited to control scaling
-APP_SCALE = 256
+APP_SCALE_X = 256
+APP_SCALE_Y = 256
+APP_SCALE_Z = 256
 MPI_RANKS = 512
 # SEEDING
 CONFIGSPACE_SEED = 1234
@@ -102,7 +104,9 @@ cs = CS.ConfigurationSpace(seed=CONFIGSPACE_SEED)
 # arg1  precision
 p0 = CSH.CategoricalHyperparameter(name='p0', choices=["double", "float"], default_value="float")
 # arg2  3D array dimension size
-p1 = CSH.Constant(name='p1', value=APP_SCALE)
+p1x = CSH.Constant(name='p1x', value=APP_SCALE_X)
+p1y = CSH.Constant(name='p1y', value=APP_SCALE_Y)
+p1z = CSH.Constant(name='p1z', value=APP_SCALE_Z)
 #p1 = CSH.OrdinalHyperparameter(name='p1', sequence=[64,128,256,512,1024], default_value=128)
 # arg3  reorder
 p2 = CSH.CategoricalHyperparameter(name='p2', choices=["-no-reorder", "-reorder"," "], default_value=" ")
@@ -114,12 +118,6 @@ p4 = CSH.CategoricalHyperparameter(name='p4', choices=["-p2p", "-p2p_pl"," "], d
 p5 = CSH.CategoricalHyperparameter(name='p5', choices=["-pencils", "-slabs"," "], default_value=" ")
 # arg7
 p6 = CSH.CategoricalHyperparameter(name='p6', choices=["-r2c_dir 0", "-r2c_dir 1","-r2c_dir 2", " "], default_value=" ")
-# arg8
-p7 = CSH.UniformFloatHyperparameter(name='p7', lower=0, upper=1)
-# arg9
-p8 = CSH.UniformFloatHyperparameter(name='p8', lower=0, upper=1)
-# number of threads is hardware-dependent
-p9 = CSH.UniformFloatHyperparameter(name='p9', lower=0, upper=1)
 
 # Cross-architecture is out-of-scope for now so we determine this for the current platform and leave it at that
 cpu_override = None
@@ -178,10 +176,44 @@ if max_depth not in sequence:
     sequence = sorted(sequence+[max_depth])
 print(f"Depths are based on {threads_per_node} threads on each node, shared across {ranks_per_node} MPI ranks on each node")
 print(f"Selectable depths are: {sequence}"+"\n")
-# arg10 number threads per MPI process
-#p9 = CSH.OrdinalHyperparameter(name='p9', sequence=sequence, default_value=max_depth)
 
-cs.add_hyperparameters([p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, c0])
+# Put topology setup here
+# Minimum surface splitting solve is used as the default topology for FFT (picked when topology == ' ')
+def surface(fft_dims, grid):
+    # Volume of FFT assigned to each process
+    box_size = (np.asarray(fft_dims) / np.asarray(grid)).astype(int)
+    # Sum of exchanged surface areas
+    return (box_size * np.roll(box_size, -1)).sum()
+def minSurfaceSplit(X, Y, Z, procs):
+    fft_dims = (X, Y, Z)
+    best_grid = (1, 1, procs)
+    best_surface = surface(fft_dims, best_grid)
+    topologies = []
+    # Consider other topologies that utilize all ranks
+    for i in range(1, procs+1):
+        if procs % i == 0:
+            remainder = int(procs / float(i))
+            for j in range(1, remainder+1):
+                candidate_grid = (i, j, int(remainder/j))
+                if np.prod(candidate_grid) != procs:
+                    continue
+                topologies.append(str(candidate_grid))
+                candidate_surface = surface(candidate_grid)
+                if candidate_surface < best_surface:
+                    best_surface = candidate_surface
+                    best_grid = candidate_grid
+    return str(best_grid), reversed(topologies)
+default_topology, topologies = minSurfaceSplit(APP_SCALE_X, APP_SCALE_Y, APP_SCALE_Z, MPI_RANKS)
+
+# arg8
+p7 = CSH.CategoricalHyperparameter(name='p7', choices=topologies, default_value=default_topology)
+# arg9
+p8 = CSH.CategoricalHyperparameter(name='p8', choices=topologies, default_value=default_topology)
+# arg10 number threads per MPI process
+p9 = CSH.OrdinalHyperparameter(name='p9', sequence=sequence, default_value=max_depth)
+
+
+cs.add_hyperparameters([p0, p1x, p1y, p1z, p2, p3, p4, p5, p6, p7, p8, p9, c0])
 
 ytoptimizer = Optimizer(
     num_workers = num_sim_workers,
@@ -258,7 +290,7 @@ MACHINE_INFO = {
 # Declare the sim_f to be optimized, and the input/outputs
 sim_specs = {
     'sim_f': init_obj,
-    'in': [f'p{_}' for _ in range(10)] + ['c0'],
+    'in': ['p0','p1x','p1y','p1z'] + [f'p{_}' for _ in range(2,10)] + ['c0'],
     'out': [('FLOPS', float, (1,)),
             ('elapsed_sec', float, (1,)),
             ('machine_identifier','<U30', (1,)),
@@ -266,6 +298,9 @@ sim_specs = {
             ('threads_per_node', int, (1,)),
             ('ranks_per_node', int, (1,)),
             ('gpu_enabled', bool, (1,)),
+            ('p7_float', float, (1,)),
+            ('p8_float', float, (1,)),
+            ('p9_float', float, (1,)),
             ('libE_id', int, (1,)),
             ('libE_workers', int, (1,)),],
     'user': {
@@ -280,26 +315,25 @@ gen_specs = {
             # MUST MATCH ORDER OF THE CONFIGSPACE HYPERPARAMETERS EXACTLY
             ('c0', "<U24", (1,)),
             ('p0', "<U24", (1,)),
-            ('p1', int, (1,)),
+            ('p1x', int, (1,)),
+            ('p1y', int, (1,)),
+            ('p1z', int, (1,)),
             ('p2', "<U24", (1,)),
             ('p3', "<U24", (1,)),
             ('p4', "<U24", (1,)),
             ('p5', "<U24", (1,)),
             ('p6', "<U24", (1,)),
-            ('p7', float, (1,)),
-            ('p8', float, (1,)),
-            ('p9', float, (1,)),
+            ('p7', "<U24", (1,)),
+            ('p8', "<U24", (1,)),
+            ('p9', int, (1,)),
             ],
     'persis_in': sim_specs['in'] +\
-                 ['FLOPS'] +\
-                 ['elapsed_sec'] +\
+                 ['FLOPS', 'elapsed_sec'] +\
                  ['machine_identifier'] +\
-                 ['mpi_ranks'] +\
-                 ['threads_per_node'] +\
-                 ['ranks_per_node'] +\
+                 ['mpi_ranks', 'threads_per_node', 'ranks_per_node'] +\
                  ['gpu_enabled'] +\
-                 ['libE_id'] +\
-                 ['libE_workers'],
+                 ['p7_float','p8_float','p9_float'] +\
+                 ['libE_id', 'libE_workers'],
     'user': {
         'machine_info': MACHINE_INFO,
         'ytoptimizer': ytoptimizer,
