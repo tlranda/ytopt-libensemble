@@ -6,6 +6,7 @@ import seaborn as sns
 import os
 import argparse
 import warnings
+import re
 
 def build(prs=None):
     if prs is None:
@@ -22,6 +23,7 @@ def build(prs=None):
     prs.add_argument("--stats", action="store_true", help="Calculate extended stats (text only)")
     prs.add_argument("--no-plots", action="store_true", help="Skip visuals")
     prs.add_argument("--normalize-y", action="store_true", help="Normalize y-axis values")
+    prs.add_argument("--smart-names", action="store_true", help="Attempt to make better names for plot legends")
     return prs
 
 def parse(prs=None, args=None):
@@ -136,7 +138,29 @@ def observations(frame, args):
     print(frame[['index','libE_id','elapsed_sec','elapsed_diff','continuous_diff','GFLOPS']])
     print()
 
-def visualizations(frames, args):
+def smart_name(name):
+    rname = None
+    if "GPTune" in name:
+        rname = "GPTune"
+    elif "Weak_TL" in name:
+        rname = "Gaussian Copula"
+    elif re.match(r"Theta_[0-9]+n_[0-9]+a", name):
+        rname = "Bayesian Optimization"
+    matches = re.match(r".*\(([0-9]+)\)", name)
+    if rname is not None and matches is not None:
+        rname += f" ({matches.groups()[0]} samples)"
+    return name if rname is None else rname
+
+def smart_title(names):
+    portions = [set(_[:_.rindex(' ')].split("_")) for _ in names]
+    common = portions[0]
+    for index in range(1,len(portions)):
+        common = common.intersection(portions[index])
+    common_nodes = int([_[:-1] for _ in common if _.endswith('n')][0])
+    common_appsc = int([_[:-1] for _ in common if _.endswith('a') and _ != "Theta"][0])
+    return f"heFFTe {common_nodes} Nodes compute {common_appsc}^3 FFT"
+
+def visualizations(frames, names, args):
     fig, ax = plt.subplots()
     max_frame_index = max([max(frame['index']) for frame in frames])
     if not args.flops_only:
@@ -152,7 +176,7 @@ def visualizations(frames, args):
         if args.monotonic:
             frame = frame.sort_values(by=['GFLOPS',]).reset_index(drop=True)
             frame['index'] = frame.index
-        fline = sns.lineplot(frame, x='index', y='GFLOPS', estimator=None, marker='+', label=name,
+        fline = sns.lineplot(data=frame, x='index', y='GFLOPS', estimator=None, marker='+', label=name,
                              color=color, markeredgecolor=color, linestyle='--', linewidth=1)
         if args.normalize_y:
             ax.set_ylabel("Normalized GFLOP/s")
@@ -164,7 +188,11 @@ def visualizations(frames, args):
     #plt.legend(labels=names, loc='best')
     #print(names)
     ax.hlines(0.0, xmin=0, xmax=max_frame_index, color='black', zorder=-1)
-    plt.legend(leglines, names, loc='best')
+    #plt.legend(leglines, names, loc='best')
+    if args.smart_names:
+        ax.set_title(smart_title(names))
+        names = [smart_name(_) for _ in names]
+    plt.legend(leglines, names, loc='center right')
     if args.save is None:
         print("Showing plots")
         plt.show()
@@ -180,5 +208,5 @@ if __name__ == '__main__':
         for frame in frames:
             observations(frame, args)
     if not args.no_plots:
-        visualizations(frames, args)
+        visualizations(frames, names, args)
 
