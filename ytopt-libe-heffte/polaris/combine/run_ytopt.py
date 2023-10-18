@@ -177,8 +177,7 @@ if max_depth not in sequence:
 print(f"Depths are based on {threads_per_node} threads on each node, shared across {ranks_per_node} MPI ranks on each node")
 print(f"Selectable depths are: {sequence}"+"\n")
 
-# Put topology setup here
-# Minimum surface splitting solve is used as the default topology for FFT (picked when topology == ' ')
+# Minimum surface splitting solve is used as the default topology for FFT (picked by heFFTe when in-grid and/or out-grid topology == ' ')
 def surface(fft_dims, grid):
     # Volume of FFT assigned to each process
     box_size = (np.asarray(fft_dims) / np.asarray(grid)).astype(int)
@@ -202,6 +201,8 @@ def minSurfaceSplit(X, Y, Z, procs):
                 if candidate_surface < best_surface:
                     best_surface = candidate_surface
                     best_grid = candidate_grid
+    # Topologies are reversed such that the topology order is X-1-1 to 1-1-X
+    # This matches previous version ordering
     return str(best_grid), reversed(topologies)
 default_topology, topologies = minSurfaceSplit(APP_SCALE_X, APP_SCALE_Y, APP_SCALE_Z, MPI_RANKS)
 
@@ -285,6 +286,7 @@ MACHINE_INFO = {
     'libE_workers': num_sim_workers,
     'app_timeout': 300,
     'sequence': sequence,
+    'topologies': topologies,
 }
 
 # Declare the sim_f to be optimized, and the input/outputs

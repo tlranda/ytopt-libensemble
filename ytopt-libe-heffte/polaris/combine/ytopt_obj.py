@@ -32,50 +32,18 @@ def init_obj(H, persis_info, sim_specs, libE_info):
     H_o['threads_per_node'] = [machine_info['threads_per_node']]
     H_o['ranks_per_node'] = [machine_info['ranks_per_node']]
     H_o['gpu_enabled'] = [machine_info['gpu_enabled']]
+    # These divisions assume at least 2 elements are present in topologies/sequence (therefore its range is 0-1 inclusive)
+    # I do not forsee a meaningful tuning case where that would be false, but libEnsemble won't gracefully catch any kind of exception/assertion so I'm not guarding against it
+    H_o['p7_float'] = [machine_info['topologies'].index(sim_specs['in']['p7'])/float(len(machine_info['topologies'])-1)]
+    H_o['p8_float'] = [machine_info['topologies'].index(sim_specs['in']['p8'])/float(len(machine_info['topologies'])-1)]
+    H_o['p9_float'] = [machine_info['sequence'].index(sim_specs['in']['p9'])/float(len(machine_info['sequence'])-1)]
     H_o['libE_id'] = [libE_info['workerID']]
     H_o['libE_workers'] = [machine_info['libE_workers']]
 
     return H_o, persis_info
 
-topology_keymap = {'p7': '-ingrid', 'p8': '-outgrid'}
-topology_cache = {}
-def make_topology(budget: int) -> list[tuple[int,int,int]]:
-    # Powers of 2 that can be represented in topology X/Y/Z
-    factors = [2 ** x for x in range(int(np.log2(budget)),-1,-1)]
-    topology = []
-    for candidate in itertools.product(factors, repeat=3):
-        # All topologies need to have product that == budget
-        if np.prod(candidate) != budget:
-            continue
-        topology.append(candidate)
-    # Add the null space
-    topology += [' ']
-    return topology
-def topology_interpret(config: dict) -> dict:
-    machine_info = config['machine_info']
-    budget = machine_info['mpi_ranks']
-    if budget not in topology_cache.keys():
-        topology_cache[budget] = make_topology(budget)
-    topology = topology_cache[budget]
-    # Replace each key with uniform bucketized value
-    for topology_key in topology_keymap.keys():
-        selection = min(int(config[topology_key] * len(topology)), len(topology)-1)
-        selected_topology = topology[selection]
-        if type(selected_topology) is not str:
-            selected_topology = f"{topology_keymap[topology_key]} {' '.join([str(_) for _ in selected_topology])}"
-        config[topology_key] = selected_topology
-    # Replace sequence value
-    config['p9'] = machine_info['sequence'][int(len(machine_info['sequence']) * config['p9'])]
-    # Fix numpy zero-dimensional arrays
-    for k,v in config.items():
-        if k not in topology_keymap.keys() and type(v) is np.ndarray and v.shape == ():
-            config[k] = v.tolist()
-    return config
-
 def myobj(point: dict, params: list, workerID: int) -> float:
     try:
-        # Topology interpretation replaces floats with MPI rank configuration based on "tall" vs "broad"
-        point = topology_interpret(point)
         machine_info = point.pop('machine_info')
         # Permit gpu-based mpiexec to isolate to this worker
         worker_nodefile = None
@@ -119,41 +87,46 @@ def myobj(point: dict, params: list, workerID: int) -> float:
         # Set known timeouts to be more specific
         known_timeouts = {}
         if 'knl' in machine_info['identifier'] or 'cpu' in machine_info['identifier']:
-            cpu_timeouts = {64: 40.0, 128: 80.0, 256: 120.0, 512: 300.0, 1024: 300.0, }
+            cpu_timeouts = {(64,64,64): 40.0,
+                            (128,128,128): 80.0,
+                            (256,256,256): 120.0,
+                            (512,512,512): 300.0,
+                            (1024,1024,1024): 300.0,
+                           }
             known_timeouts.update(cpu_timeouts)
         elif 'gpu' in machine_info['identifier']:
-            gpu_timeouts = {64: 20.0, 128: 20.0, 256: 30.0, 512: 40.0, 1024: 60.0, }
+            gpu_timeouts = {(64,64,64): 20.0,
+                            (128,128,128): 20.0,
+                            (256,256,256): 30.0,
+                            (512,512,512): 40.0,
+                            (1024,1024,1024): 60.0,
+                           }
             known_timeouts.update(gpu_timeouts)
-        if point['p1'] in known_timeouts.keys():
-            machine_info['app_timeout'] = known_timeouts[point['p1']]
+        xyz = (point['p1x'], point['p1y'], point['p1z'])
+        if xyz in known_timeouts.keys():
+            machine_info['app_timeout'] = known_timeouts[xyz]
 
         # Swap plopper templates / alter arguments when needed
         plopper_template = "./speed3d.sh"
-        if point['p1'] >= 1024:
+        if max(xyz) >= 1024:
             # Prevent indexing overflow errors
             point['p0'] += "-long"
             # Disable GPU aware MPI so we can run successfully
             # No need to check if on cpu--this argument shouldn't have an affect in that case
             plopper_template = "./speed3d_no_gpu_aware.sh"
         print(f"[worker {workerID} - obj] receives point {point}")
-        x = np.array(point.values())
-        def plopper_func(x, params):
-            # Should utilize machine identifier
-            obj = Plopper(plopper_template, './', machine_format_str)
-            x = np.asarray_chkfinite(x)
-            value = [point[param] for param in params]
-            os.environ["OMP_NUM_THREADS"] = str(value[9])
-            params = [i.upper() for i in params]
-            result = obj.findRuntime(value, params, workerID,
-                                     machine_info['libE_workers'],
-                                     machine_info['app_timeout'],
-                                     machine_info['mpi_ranks'],
-                                     machine_info['ranks_per_node'],
-                                     1 # n_repeats
-                                     )
-            return result
-
-        results = plopper_func(x, params)
+        x = np.asarray_chkfinite(point.values())
+        obj = Plopper(plopper_template, './', machine_format_str)
+        values = [point[param] for param in params]
+        os.environ["OMP_NUM_THREADS"] = str(value[9])
+        params = [i.upper() for i in params]
+        results = obj.findRuntime(value, params, workerID,
+                                  machine_info['libE_workers'],
+                                  machine_info['app_timeout'],
+                                  machine_info['mpi_ranks'],
+                                  machine_info['ranks_per_node'],
+                                  1 # n_repeats
+                                  )
         # print('CONFIG and OUTPUT', [point, results], flush=True)
         print(f"[worker {workerID} - obj] returns point {results}")
         return results
