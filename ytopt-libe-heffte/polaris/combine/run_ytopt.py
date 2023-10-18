@@ -187,6 +187,7 @@ def minSurfaceSplit(X, Y, Z, procs):
     fft_dims = (X, Y, Z)
     best_grid = (1, 1, procs)
     best_surface = surface(fft_dims, best_grid)
+    best_grid = " ".join([str(_) for _ in best_grid])
     topologies = []
     # Consider other topologies that utilize all ranks
     for i in range(1, procs+1):
@@ -196,20 +197,23 @@ def minSurfaceSplit(X, Y, Z, procs):
                 candidate_grid = (i, j, int(remainder/j))
                 if np.prod(candidate_grid) != procs:
                     continue
-                topologies.append(str(candidate_grid))
+                strtopology = " ".join([str(_) for _ in candidate_grid])
+                topologies.append(strtopology)
                 candidate_surface = surface(fft_dims, candidate_grid)
                 if candidate_surface < best_surface:
                     best_surface = candidate_surface
-                    best_grid = candidate_grid
+                    best_grid = strtopology
     # Topologies are reversed such that the topology order is X-1-1 to 1-1-X
     # This matches previous version ordering
-    return str(best_grid), list(reversed(topologies))
+    return best_grid, list(reversed(topologies))
 default_topology, topologies = minSurfaceSplit(APP_SCALE_X, APP_SCALE_Y, APP_SCALE_Z, MPI_RANKS)
 
 # arg8
-p7 = CSH.CategoricalHyperparameter(name='p7', choices=topologies, default_value=default_topology)
+#p7 = CSH.CategoricalHyperparameter(name='p7', choices=topologies, default_value=default_topology)
+p7 = CSH.Constant(name='p7', value=f'{MPI_RANKS} 1 1')
 # arg9
-p8 = CSH.CategoricalHyperparameter(name='p8', choices=topologies, default_value=default_topology)
+#p8 = CSH.CategoricalHyperparameter(name='p8', choices=topologies, default_value=default_topology)
+p8 = CSH.Constant(name='p8', value=f'{MPI_RANKS} 1 1')
 # arg10 number threads per MPI process
 p9 = CSH.OrdinalHyperparameter(name='p9', sequence=sequence, default_value=max_depth)
 
