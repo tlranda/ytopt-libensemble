@@ -34,9 +34,9 @@ def init_obj(H, persis_info, sim_specs, libE_info):
     H_o['gpu_enabled'] = [machine_info['gpu_enabled']]
     # These divisions assume at least 2 elements are present in topologies/sequence (therefore its range is 0-1 inclusive)
     # I do not forsee a meaningful tuning case where that would be false, but libEnsemble won't gracefully catch any kind of exception/assertion so I'm not guarding against it
-    H_o['p7_float'] = [machine_info['topologies'].index(sim_specs['in']['p7'])/float(len(machine_info['topologies'])-1)]
-    H_o['p8_float'] = [machine_info['topologies'].index(sim_specs['in']['p8'])/float(len(machine_info['topologies'])-1)]
-    H_o['p9_float'] = [machine_info['sequence'].index(sim_specs['in']['p9'])/float(len(machine_info['sequence'])-1)]
+    H_o['p7_float'] = [machine_info['topologies'].index(point['p7'])/float(len(machine_info['topologies'])-1)]
+    H_o['p8_float'] = [machine_info['topologies'].index(point['p8'])/float(len(machine_info['topologies'])-1)]
+    H_o['p9_float'] = [machine_info['sequence'].index(point['p9'])/float(len(machine_info['sequence'])-1)]
     H_o['libE_id'] = [libE_info['workerID']]
     H_o['libE_workers'] = [machine_info['libE_workers']]
 

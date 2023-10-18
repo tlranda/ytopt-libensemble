@@ -155,7 +155,7 @@ else:
 print(f"Set ranks_per_node to {ranks_per_node}"+"\n")
 
 NODE_COUNT = max(MPI_RANKS // ranks_per_node,1)
-print(f"APP_SCALE (AKA Problem Size X, X, X) = {APP_SCALE} x3")
+print(f"APP_SCALE (AKA Problem Size X, Y, Z) = {APP_SCALE_X}, {APP_SCALE_Y}, {APP_SCALE_Z}")
 print(f"MPI_RANKS (AKA System Size X * Y = Z) = {NODE_COUNT} * {ranks_per_node} = {MPI_RANKS}")
 # Don't exceed #threads across total ranks
 max_depth = threads_per_node // ranks_per_node
@@ -197,13 +197,13 @@ def minSurfaceSplit(X, Y, Z, procs):
                 if np.prod(candidate_grid) != procs:
                     continue
                 topologies.append(str(candidate_grid))
-                candidate_surface = surface(candidate_grid)
+                candidate_surface = surface(fft_dims, candidate_grid)
                 if candidate_surface < best_surface:
                     best_surface = candidate_surface
                     best_grid = candidate_grid
     # Topologies are reversed such that the topology order is X-1-1 to 1-1-X
     # This matches previous version ordering
-    return str(best_grid), reversed(topologies)
+    return str(best_grid), list(reversed(topologies))
 default_topology, topologies = minSurfaceSplit(APP_SCALE_X, APP_SCALE_Y, APP_SCALE_Z, MPI_RANKS)
 
 # arg8
