@@ -91,9 +91,10 @@ libE_specs['ensemble_dir_path'] = f'./ensemble_{ENSEMBLE_DIR_PATH}'
 print(f"This ensemble operates as: {libE_specs['ensemble_dir_path']}"+"\n")
 
 # Variables that will be sed-edited to control scaling
-APP_SCALE_X = 256
-APP_SCALE_Y = 256
-APP_SCALE_Z = 256
+APP_SCALE = 256
+APP_SCALE_X = APP_SCALE
+APP_SCALE_Y = APP_SCALE
+APP_SCALE_Z = APP_SCALE
 MPI_RANKS = 512
 # SEEDING
 CONFIGSPACE_SEED = 1234
