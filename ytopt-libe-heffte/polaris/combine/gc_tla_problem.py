@@ -12,7 +12,19 @@ input_space = [('Categorical',
                 }
                ),
                ('Ordinal',
-                {'name': 'p1',
+                {'name': 'p1x',
+                 'sequence': ['64','128','256','512','1024'],
+                 'default_value': '128',
+                }
+               ),
+               ('Ordinal',
+                {'name': 'p1y',
+                 'sequence': ['64','128','256','512','1024'],
+                 'default_value': '128',
+                }
+               ),
+               ('Ordinal',
+                {'name': 'p1z',
                  'sequence': ['64','128','256','512','1024'],
                  'default_value': '128',
                 }
@@ -47,24 +59,30 @@ input_space = [('Categorical',
                  'default_value': ' ',
                 }
                ),
-               ('UniformFloat',
+               # BELOW HERE ARE DUMMY VALUES
+               # They should be overwritten by the customize_space() call based on available resources
+               # p7/p8 represent topologies as space-delimited strings with integer #ranks/dim for X/Y/Z
+               # p9 represents selectable #threads as integers
+               # c0 represents the FFT backend selection as a string (usually 'cufft' for GPUs, 'fftw' for CPUs)
+               #
+               # Implementers should be able to copy this template and update these values to fit
+               # the actual tuning space. Any instantiated object's space should be updated via a
+               # call to its plopper.set_architecture_info() and set_space() functions
+               ('Categorical',
                 {'name': 'p7',
-                 'lower': 0,
-                 'upper': 1,
-                 'default_value': 1,
+                 'choices': ['1 1 1'],
+                 'default_value': '1 1 1',
                 }
                ),
-               ('UniformFloat',
+               ('Categorical',
                 {'name': 'p8',
-                 'lower': 0,
-                 'upper': 1,
-                 'default_value': 1,
+                 'choices': ['1 1 1'],
+                 'default_value': '1 1 1',
                 }
                ),
-               ('UniformFloat',
+               ('Categorical',
                 {'name': 'p9',
-                 'lower': 0,
-                 'upper': 1,
+                 'choices': [1],
                  'default_value': 1,
                 }
                ),
@@ -86,17 +104,19 @@ def customize_space(self, class_size):
         raise ValueError("Self and Plopper do not sufficiently define attributes to customize space\nMissing attributes: ", REQ_ATTRS)
 
     altered_space = self.input_space
-    self.node_count, self.app_scale = class_size
+    self.node_count, self.app_scale_x, self.app_scale_y, self.app_scale_z = class_size
 
     # App scale sets constant size
-    altered_space[1] = ('Constant', {'name': 'p1', 'value': self.app_scale})
+    altered_space[1] = ('Constant', {'name': 'p1x', 'value': self.app_scale_x})
+    altered_space[2] = ('Constant', {'name': 'p1y', 'value': self.app_scale_y})
+    altered_space[3] = ('Constant', {'name': 'p1z', 'value': self.app_scale_z})
 
     # Node scale determines depth scalability
     self.max_cpus = self.threads_per_node if 'threads_per_node' in defined_by_self else self.plopper.threads_per_node
     self.gpus = self.gpus if 'gpus' in defined_by_self else self.plopper.gpus
     self.ppn = self.ranks_per_node if 'ranks_per_node' in defined_by_self else self.plopper.ranks_per_node
     c0_value = 'cufft' if self.gpus > 0 else 'fftw'
-    altered_space[10] = ('Constant', {'name': 'c0', 'value': c0_value})
+    altered_space[12] = ('Constant', {'name': 'c0', 'value': c0_value})
 
     self.node_scale = self.node_count * self.ppn
     # Don't exceed #threads across total ranks
@@ -121,7 +141,30 @@ def customize_space(self, class_size):
 APP_SCALES = [64,128,256,512,1024,1400,2048]
 APP_SCALE_NAMES = ['N','S','M','L','XL','H','XH']
 NODE_SCALES = [1,2,4,8,16,32,64,128]
-lookup_ival = dict(((k1,k2),f"{v2}_{k1}") for (k2,v2) in zip(APP_SCALES, APP_SCALE_NAMES) for k1 in NODE_SCALES)
+def lookup_ival(nodes, x_dim, y_dim, z_dim):
+    if nodes not in NODE_SCALES:
+        Unknown_Node_Scale = f"{__file__} does not define node scale {nodes}. Available sizes: {NODE_SCALES}"
+        raise ValueError(Unknown_Node_Scale)
+    if any([scale not in APP_SCALES for scale in [x_dim, y_dim, z_dim]]):
+        Unknown_App_Scale = f"{__file__} does not define one or more app scales {x_dim},{y_dim},{z_dim}. Available sizes: {APP_SCALES}"
+        raise ValueError(Unknown_App_Scale)
+    app_i2s = dict((i,s) for (i,s) in zip(APP_SCALES, APP_SCALE_NAMES))
+    return f"{app_i2s[x_dim]}_{app_i2s[y_dim]}_{app_i2s[z_dim]}_{nodes}"
+def inv_lookup_ival(s,default=False):
+    if default:
+        return (1,64,64,64)
+    nodes = int(s.split('_')[-1])
+    if nodes not in NODE_SCALES:
+        Unknown_Node_Scale = f"{__file__} does not define node scale {nodes}. Available sizes: {NODE_SCALES}"
+        raise ValueError(Unknown_Node_Scale)
+    x,y,z = (_ for _ in s.split('_')[:-1])
+    app_s2i = dict((s,i) for (i,s) in zip(APP_SCALES, APP_SCALE_NAMES))
+    if any([scale not in APP_SCALE_NAMES for scale in [x, y, z]]):
+        Unknown_App_Scale = f"{__file__} does not define one or more app scales {x},{y},{z}. Available sizes: {APP_SCALE_NAMES}"
+        raise ValueError(Unknown_App_Scale)
+    x,y,z = (app_s2i[_] for _ in [x,y,z])
+    return (nodes, x, y, z)
+#lookup_ival = dict(((k1,k2),f"{v2}_{k1}") for (k2,v2) in zip(APP_SCALES, APP_SCALE_NAMES) for k1 in NODE_SCALES)
 
 class TopologyCache(UserDict):
     # We utilize this dictionary as a hashmap++, so KeyErrors don't matter
@@ -193,11 +236,18 @@ class heffte_plopper(LibE_Plopper):
         self.known_timeouts = {}
         if 'polaris' in self.machine_identifier:
             self.cmd_template = "mpiexec -n {mpi_ranks} --ppn {ranks_per_node} --depth {depth} --cpu-bind depth --env OMP_NUM_THREADS={depth} sh ./set_affinity_gpu_polaris.sh {interimfile}"
-            polaris_timeouts = {64:10.0, 128: 10.0, 256: 10.0, 512: 10.0}
+            polaris_timeouts = {(64,64,64): 10.0,
+                                (128,128,128): 10.0,
+                                (256,256,256): 10.0,
+                                (512,512,512): 10.0,
+                               }
             self.known_timeouts.update(polaris_timeouts)
         elif 'theta' in self.machine_identifier:
             self.cmd_template = "aprun -n {mpi_ranks} -N {ranks_per_node} -cc depth -d {depth} -j {j} -e OMP_NUM_THREADS={depth} sh {interimfile}"
-            theta_timeouts = {64: 20.0, 128: 40.0, 256: 60.0}
+            theta_timeouts = {(64,64,64): 20.0,
+                              (128,128,128): 40.0,
+                              (256,256,256): 60.0,
+                             }
             self.known_timeouts.update(theta_timeouts)
         self.node_scale = self.nodes * self.ranks_per_node
         # Don't exceed #threads across total ranks
@@ -302,6 +352,6 @@ class heffte_plopper(LibE_Plopper):
 
 import pdb
 #pdb.set_trace()
-__getattr__ = libe_problem_builder(lookup_ival, input_space, HERE, name='heFFTe_Problem',
+__getattr__ = libe_problem_builder(lookup_ival, inv_lookup_ival, input_space, HERE, name='heFFTe_Problem',
                                     customize_space=customize_space, plopper_class=heffte_plopper)
 
