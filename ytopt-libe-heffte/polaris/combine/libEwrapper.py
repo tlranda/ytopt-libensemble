@@ -56,15 +56,14 @@ def build():
     scaling.add_argument("--worker-timeout", type=int, default=100,
                         help="Timeout for Worker subprocesses (default: %(default)s)")
     # choices=[64,128,256,512,1024]
-    # 1D app scaling TO BE DEPRECATED
     scaling.add_argument("--application-scale", type=int, default=128,
-                        help="Problem size to be optimized (default: %(default)s)")
-    scaling.add_argument("--application-x", type=int, default=128,
-                        help="FFT size in X-dimension (default: %(default)s)")
-    scaling.add_argument("--application-y", type=int, default=128,
-                        help="FFT size in Y-dimension (default: %(default)s)")
-    scaling.add_argument("--application-z", type=int, default=128,
-                        help="FFT size in Z-dimension (default: %(default)s)")
+                        help="Default FFT dimension scale for unspecified --application-[xyz] arguments (default: %(default)s)")
+    scaling.add_argument("--application-x", type=int, default=None,
+                        help="FFT size in X-dimension (default: --application-scale value)")
+    scaling.add_argument("--application-y", type=int, default=None,
+                        help="FFT size in Y-dimension (default: --application-scale value)")
+    scaling.add_argument("--application-z", type=int, default=None,
+                        help="FFT size in Z-dimension (default: --application-scale value)")
     # Polaris-*: 64
     # Theta-KNL: 256
     # Theta-GPU: 128
@@ -143,6 +142,12 @@ def parse(prs=None, args=None):
         args.machine_identifier = f'"{args.machine_identifier}"'
 
     # Scaling and system overides
+    if args.application_x is None:
+        args.application_x = 'APP_SCALE'
+    if args.application_y is None:
+        args.application_y = 'APP_SCALE'
+    if args.application_z is None:
+        args.application_z = 'APP_SCALE'
     if args.cpu_override is None:
         args.cpu_override = "None"
     else:
@@ -217,7 +222,6 @@ def parse(prs=None, args=None):
         ('seed_numpy',): [(args.ens_template_export, "s/NUMPY_SEED = .*/NUMPY_SEED = {}/"),],
         ('mpi_ranks',): [(args.ens_template_export, "s/MPI_RANKS = [0-9]*/MPI_RANKS = {}/"),],
         ('worker_timeout',): [(args.ens_template_export, "s/'app_timeout': [0-9]*,/'app_timeout': {},/"),],
-        # 1D tuning TO BE DEPRECATED
         ('application_scale',): [(args.ens_template_export, "s/APP_SCALE = [0-9A-Z_]*/APP_SCALE = {}/"),],
         ('application_x',): [(args.ens_template_export, "s/APP_SCALE_X = [0-9A-Z_]*/APP_SCALE_X = {}/"),],
         ('application_y',): [(args.ens_template_export, "s/APP_SCALE_Y = [0-9A-Z_]*/APP_SCALE_Y = {}/"),],
