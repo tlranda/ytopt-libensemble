@@ -66,7 +66,6 @@ def minSurfaceSplit(X, Y, Z, procs):
     # Topologies are reversed such that the topology order is X-1-1 to 1-1-X
     # This matches previous version ordering
     return best_grid, list(reversed(topologies))
-#default_topology, topologies = minSurfaceSplit(APP_SCALE_X, APP_SCALE_Y, APP_SCALE_Z, MPI_RANKS)
 
 
 def build():
@@ -150,132 +149,148 @@ def parse(args=None, prs=None):
             exceptionDetail = f"More output names provided to --update-convert than input CSVs --csv."
         if exceptionDetail is not None:
             raise ValueError(exceptionDetail)
+    else:
+        args.update_convert = [None] * len(args.csv)
     return args
 
-def deinterpret(csvs, names, args):
-    param_cols = [f'p{_}' for _ in range(10)] + ['c0']
-    topCache = OldTopologyCache()
+def old_float_to_values(csv):
+    # De-interpret the topology
     top_keymap = {'P7': '-ingrid', 'P8': '-outgrid'}
-    for (csv, name, save) in zip(csvs, names, args.save):
-        original_len = len(csv)
-        # Reconstruct architecture info from records
-        try:
-            TPN = list(set(csv['threads_per_node']))[0]
-        except:
-            if hasattr(args, 'def_threads_per_node') and args.def_threads_per_node is not None:
-                TPN = args.def_threads_per_node
-            else:
-                raise
-        try:
-            RPN = list(set(csv['ranks_per_node']))[0]
-        except:
-            if hasattr(args, 'def_ranks_per_node') and args.def_ranks_per_node is not None:
-                RPN = args.def_ranks_per_node
-            else:
-                raise
-        max_depth = TPN // RPN
-        sequence = [2**_ for _ in range(1,10) if (2**_) <= max_depth]
-        if len(sequence) >= 2:
-            intermediates = []
-            prevpow = sequence[1]
-            for rawpow in sequence[2:]:
-                if rawpow+prevpow >= max_depth:
-                    break
-                intermediates.append(rawpow+prevpow)
-                prevpow = rawpow
-            sequence = sorted(intermediates + sequence)
-        # Ensure max_depth is always in the list
-        if max_depth not in sequence:
-            sequence = sorted(sequence+[max_depth])
-
-        # De-interpret the topology
-        altered_topologies = np.empty((original_len, len(top_keymap.keys())), dtype=object)
-        altered_sequence = np.empty((original_len, 1), dtype=int)
-        sequence = np.asarray(sequence)
-
-        # Figure out whether P9 is upper/lower case
-        p9_key = 'p9' if 'p9' in csv.columns else 'P9'
-        # Topology keymap is always in upper case, so may have to temp-cast it
-        if p9_key.lower() == p9_key:
-            topkeys = [k.lower() for k in top_keymap.keys()]
+    topCache = OldTopologyCache()
+    original_len = len(csv)
+    # Reconstruct architecture info from records
+    try:
+        TPN = list(set(csv['threads_per_node']))[0]
+    except:
+        if hasattr(args, 'def_threads_per_node') and args.def_threads_per_node is not None:
+            TPN = args.def_threads_per_node
         else:
-            topkeys = list(top_keymap.keys())
+            raise
+    try:
+        RPN = list(set(csv['ranks_per_node']))[0]
+    except:
+        if hasattr(args, 'def_ranks_per_node') and args.def_ranks_per_node is not None:
+            RPN = args.def_ranks_per_node
+        else:
+            raise
+    max_depth = TPN // RPN
+    sequence = [2**_ for _ in range(1,10) if (2**_) <= max_depth]
+    if len(sequence) >= 2:
+        intermediates = []
+        prevpow = sequence[1]
+        for rawpow in sequence[2:]:
+            if rawpow+prevpow >= max_depth:
+                break
+            intermediates.append(rawpow+prevpow)
+            prevpow = rawpow
+        sequence = sorted(intermediates + sequence)
+    # Ensure max_depth is always in the list
+    if max_depth not in sequence:
+        sequence = sorted(sequence+[max_depth])
 
-        # Groupby budgets for more efficient processing
-        for (gidx, group) in csv.groupby('mpi_ranks'):
-            budget = group.loc[group.index[0], 'mpi_ranks']
-            # Topology
-            topology = np.asarray(topCache[budget], dtype=object)
-            # Topology must be differentiably cast, but doesn't need to be representative per se
-            for tidx, topology_key in enumerate(topkeys):
-                # Initial selection followed by boundary fixing, then substitute from array
-                # Gaussian Copula CAN over/undersample, so you have to fix that too
-                selection = (group[topology_key] * len(topology)).astype(int)
-                selection = selection.apply(lambda s: max(min(s, len(topology)-1), 0))
-                selection = topology[selection]
-                altered_topologies[group.index, tidx] = selection
-            # Sequence
-            selection = (group[p9_key] * len(sequence)).astype(int)
-            selection = selection.apply(lambda s: max(min(s, len(sequence)-1), 0))
-            altered_sequence[group.index] = sequence[selection].reshape(len(selection),1)
-        # Substitute values and return
-        for key, replacement in zip(topkeys+[p9_key],
-                                    np.hsplit(altered_topologies, altered_topologies.shape[1])+[altered_sequence]):
-            csv[key] = replacement
-        if args.count_collisions:
-            print(f"{name} Collions: {original_len} --> {len(csv.drop_duplicates(subset=param_cols))}")
-        if args.show:
-            print(name)
-            if args.sort_flops and 'FLOPS' in csv.columns:
-                csv = csv.sort_values(by=['FLOPS'])
-            if args.cols is None:
-                print(csv)
-            else:
-                disp_cols = [_ for _ in args.cols if _ in csv.columns]
-                mismatch = set(args.cols).difference(disp_cols)
-                if len(mismatch) > 0:
-                    print(f"The following columns were not found and cannot be printed: {sorted(mismatch)}")
-                print(csv[disp_cols])
-        if args.unique_show:
-            print(name)
-            param_cols = [f'p{_}' for _ in range(10)]+['c0']
-            no_dupes = csv.drop_duplicates(subset=param_cols)
-            dupes = csv[csv.duplicated(subset=param_cols)]
-            if args.sort_flops and 'FLOPS' in no_dupes.columns:
-                no_dupes = no_dupes.sort_values(by=['FLOPS'])
-            if args.cols is None:
-                print(no_dupes)
-            else:
-                disp_cols = [_ for _ in args.cols if _ in csv.columns]
-                mismatch = set(args.cols).difference(disp_cols)
-                if len(mismatch) > 0:
-                    print(f"The following columns were not found and cannot be printed: {sorted(mismatch)}")
-                print(no_dupes[disp_cols])
-            for (iterdx, row) in no_dupes.iterrows():
-                # Get the dupes that match this row
-                search_tup = tuple(row[param_cols].values)
-                n_matching = (dupes[param_cols] == search_tup).sum(1)
-                full_matches = np.where(n_matching == len(param_cols))[0]
-                flops = np.append(row['FLOPS'], dupes.loc[dupes.index[full_matches], 'FLOPS'].values)
-                if len(flops) == 1 and not args.unique_all:
-                    continue
-                print(f"{row.to_frame().T[param_cols]} appears {len(flops)} times in the records")
-                print("\t"+f"Min FLOPS: {flops.min()}")
-                print("\t"+f"Mean FLOPS: {flops.mean()}")
-                print("\t"+f"Max FLOPS: {flops.max()}")
-                print("\t"+f"Var FLOPS: {flops.std()}")
-        if save is not None:
-            csv.to_csv(save, index=False)
-        if args.enumerate:
-            import pprint
-            for col in csv.columns:
-                # Sort based on count descending
-                options = np.asarray(sorted(set(csv[col])))
-                counts = np.asarray([csv[col].to_list().count(k) for k in options])
-                sort = np.argsort(-counts)
-                col_dict = dict((k, c) for (k, c) in zip(options[sort], counts[sort]))
-                #col_dict = dict((k,csv[col].to_list().count(k)) for k in sorted(set(csv[col])))
-                pprint.pprint({col: col_dict}, sort_dicts=False)
+    altered_topologies = np.empty((original_len, len(top_keymap.keys())), dtype=object)
+    altered_sequence = np.empty((original_len, 1), dtype=int)
+    sequence = np.asarray(sequence)
+
+    # Figure out whether P9 is upper/lower case
+    p9_key = 'p9' if 'p9' in csv.columns else 'P9'
+    # Topology keymap is always in upper case, so may have to temp-cast it
+    if p9_key.lower() == p9_key:
+        topkeys = [k.lower() for k in top_keymap.keys()]
+    else:
+        topkeys = list(top_keymap.keys())
+
+    # Groupby budgets for more efficient processing
+    for (gidx, group) in csv.groupby('mpi_ranks'):
+        budget = group.loc[group.index[0], 'mpi_ranks']
+        # Topology
+        topology = np.asarray(topCache[budget], dtype=object)
+        # Topology must be differentiably cast, but doesn't need to be representative per se
+        for tidx, topology_key in enumerate(topkeys):
+            # Initial selection followed by boundary fixing, then substitute from array
+            # Gaussian Copula CAN over/undersample, so you have to fix that too
+            selection = (group[topology_key] * len(topology)).astype(int)
+            selection = selection.apply(lambda s: max(min(s, len(topology)-1), 0))
+            selection = topology[selection]
+            altered_topologies[group.index, tidx] = selection
+        # Sequence
+        selection = (group[p9_key] * len(sequence)).astype(int)
+        selection = selection.apply(lambda s: max(min(s, len(sequence)-1), 0))
+        altered_sequence[group.index] = sequence[selection].reshape(len(selection),1)
+    # Substitute values and return
+    for key, replacement in zip(topkeys+[p9_key],
+                                np.hsplit(altered_topologies, altered_topologies.shape[1])+[altered_sequence]):
+        csv[key] = replacement
+    return csv
+
+def deinterpret(csvs, names, update_convert, args):
+    param_cols = [f'p{_}' for _ in range(10)] + ['c0']
+    for (csv, name, conversion, save) in zip(csvs, names, update_convert, args.save):
+        original_len = len(csv)
+        csv = old_float_to_values(csv)
+        # If not update-converting, we just remap and possibly save
+        if conversion is None:
+            if args.count_collisions:
+                print(f"{name} Collions: {original_len} --> {len(csv.drop_duplicates(subset=param_cols))}")
+            if args.show:
+                print(name)
+                if args.sort_flops and 'FLOPS' in csv.columns:
+                    csv = csv.sort_values(by=['FLOPS'])
+                if args.cols is None:
+                    print(csv)
+                else:
+                    disp_cols = [_ for _ in args.cols if _ in csv.columns]
+                    mismatch = set(args.cols).difference(disp_cols)
+                    if len(mismatch) > 0:
+                        print(f"The following columns were not found and cannot be printed: {sorted(mismatch)}")
+                    print(csv[disp_cols])
+            if args.unique_show:
+                print(name)
+                param_cols = [f'p{_}' for _ in range(10)]+['c0']
+                no_dupes = csv.drop_duplicates(subset=param_cols)
+                dupes = csv[csv.duplicated(subset=param_cols)]
+                if args.sort_flops and 'FLOPS' in no_dupes.columns:
+                    no_dupes = no_dupes.sort_values(by=['FLOPS'])
+                if args.cols is None:
+                    print(no_dupes)
+                else:
+                    disp_cols = [_ for _ in args.cols if _ in csv.columns]
+                    mismatch = set(args.cols).difference(disp_cols)
+                    if len(mismatch) > 0:
+                        print(f"The following columns were not found and cannot be printed: {sorted(mismatch)}")
+                    print(no_dupes[disp_cols])
+                for (iterdx, row) in no_dupes.iterrows():
+                    # Get the dupes that match this row
+                    search_tup = tuple(row[param_cols].values)
+                    n_matching = (dupes[param_cols] == search_tup).sum(1)
+                    full_matches = np.where(n_matching == len(param_cols))[0]
+                    flops = np.append(row['FLOPS'], dupes.loc[dupes.index[full_matches], 'FLOPS'].values)
+                    if len(flops) == 1 and not args.unique_all:
+                        continue
+                    print(f"{row.to_frame().T[param_cols]} appears {len(flops)} times in the records")
+                    print("\t"+f"Min FLOPS: {flops.min()}")
+                    print("\t"+f"Mean FLOPS: {flops.mean()}")
+                    print("\t"+f"Max FLOPS: {flops.max()}")
+                    print("\t"+f"Var FLOPS: {flops.std()}")
+            if save is not None:
+                csv.to_csv(save, index=False)
+            if args.enumerate:
+                import pprint
+                for col in csv.columns:
+                    # Sort based on count descending
+                    options = np.asarray(sorted(set(csv[col])))
+                    counts = np.asarray([csv[col].to_list().count(k) for k in options])
+                    sort = np.argsort(-counts)
+                    col_dict = dict((k, c) for (k, c) in zip(options[sort], counts[sort]))
+                    #col_dict = dict((k,csv[col].to_list().count(k)) for k in sorted(set(csv[col])))
+                    pprint.pprint({col: col_dict}, sort_dicts=False)
+
+        # When update-converting, remapping is different
+        else:
+            cubeshape = csv['p1'].values.tolist()[0]
+            mpiranks = csv['mpi-ranks'].values.tolist()[0]
+            default_topology, convert_topologies = minSurfaceSplit(cubeshape, cubeshape, cubeshape, mpiranks)
+
 
 def main(args=None):
     args = parse(args)
@@ -283,13 +298,15 @@ def main(args=None):
     pd.set_option('display.max_rows', args.pandas_display)
     csvs = []
     names = []
-    for name in args.csv:
+    conversions = []
+    for name, conversion in zip(args.csv, args.update_convert):
         try:
             csvs.append(pd.read_csv(name))
             names.append(name)
+            conversions.append(conversion)
         except:
             print(f"Unable to load csv '{name}'")
-    deinterpret(csvs, names, args)
+    deinterpret(csvs, names, conversions, args)
 
 if __name__ == '__main__':
     main()
