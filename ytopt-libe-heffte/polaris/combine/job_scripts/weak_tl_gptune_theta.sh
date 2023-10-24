@@ -55,6 +55,7 @@ for rank_idx in ${!weak_dataset[@]}; do
     eval "${call}";
     mv gptune_${n_nodes}n_${app_scale}a.csv ${store_dir};
     mv tmp_files ${store_dir};
+    mv gptune.db/heFFTe*.json ${store_dir};
     date;
     calls=$(( ${calls} + 1 ));
 done;
