@@ -4,7 +4,7 @@ import itertools
 import pathlib
 import argparse
 
-class TopologyCache(UserDict):
+class OldTopologyCache(UserDict):
     # We utilize this dictionary as a hashmap++, so KeyErrors don't matter
     # If the key doesn't exist, we'll create it and its value, then want to store it
     # to operate as a cache for known keys. As such, this subclass permits the behavior with
@@ -35,11 +35,43 @@ class TopologyCache(UserDict):
         return topology
 
     def __repr__(self):
-        return "TopologyCache:"+super().__repr__()
+        return "OldTopologyCache:"+super().__repr__()
+
+# Minimum surface splitting solve is used as the default topology for FFT (picked by heFFTe when in-grid and/or out-grid topology == ' ')
+def surface(fft_dims, grid):
+    # Volume of FFT assigned to each process
+    box_size = (np.asarray(fft_dims) / np.asarray(grid)).astype(int)
+    # Sum of exchanged surface areas
+    return (box_size * np.roll(box_size, -1)).sum()
+def minSurfaceSplit(X, Y, Z, procs):
+    fft_dims = (X, Y, Z)
+    best_grid = (1, 1, procs)
+    best_surface = surface(fft_dims, best_grid)
+    best_grid = " ".join([str(_) for _ in best_grid])
+    topologies = []
+    # Consider other topologies that utilize all ranks
+    for i in range(1, procs+1):
+        if procs % i == 0:
+            remainder = int(procs / float(i))
+            for j in range(1, remainder+1):
+                candidate_grid = (i, j, int(remainder/j))
+                if np.prod(candidate_grid) != procs:
+                    continue
+                strtopology = " ".join([str(_) for _ in candidate_grid])
+                topologies.append(strtopology)
+                candidate_surface = surface(fft_dims, candidate_grid)
+                if candidate_surface < best_surface:
+                    best_surface = candidate_surface
+                    best_grid = strtopology
+    # Topologies are reversed such that the topology order is X-1-1 to 1-1-X
+    # This matches previous version ordering
+    return best_grid, list(reversed(topologies))
+#default_topology, topologies = minSurfaceSplit(APP_SCALE_X, APP_SCALE_Y, APP_SCALE_Z, MPI_RANKS)
+
 
 def build():
     prs = argparse.ArgumentParser()
-    prs.add_argument('--csv', nargs="+", default=None, help="CSVs to de-interpret")
+    prs.add_argument('--csv', '--csvs', nargs="+", default=None, help="CSVs to de-interpret")
     prs.add_argument('--count-collisions', action='store_true', help="Determine number of identical records post-interpretation")
     prs.add_argument('--cols', nargs="*", default=None, help="Columns to show in CSV printing routines (default: ALL)")
     prs.add_argument('--sort-flops', action='store_true', help="Sort rows by flops column (default: no sorting)")
@@ -52,6 +84,7 @@ def build():
     prs.add_argument('--auto', default=None, help="Automatic renaming for CSV saving (not used by default; this suffix is added to filenames before the extension)")
     prs.add_argument('--def-threads-per-node', default=None, type=int, help="Provide default number of threads per node if not present in CSV")
     prs.add_argument('--def-ranks-per-node', default=None, type=int, help="Provide default number of ranks per node if not present in CSV")
+    prs.add_argument('--update-convert', nargs="+", default=None, help="Reinterpret CSVs to this destination (must match # of file names, provide a single file name stem, or reference an existing directory where original file names will not clobber)")
     return prs
 
 def parse(args=None, prs=None):
@@ -66,7 +99,7 @@ def parse(args=None, prs=None):
             p = pathlib.Path(name)
             args.save.append(p.with_stem(p.stem+args.auto))
     # List-ify if only one argument is present
-    for name in ['csv', 'save', 'cols']:
+    for name in ['csv', 'save', 'cols', 'update_convert']:
         local = getattr(args, name)
         if type(local) is str:
             setattr(args, name, [local])
@@ -74,11 +107,54 @@ def parse(args=None, prs=None):
         raise ValueError("--csv and --save must have same number of entries when --save is specified")
     elif args.save is None:
         args.save = [None] * len(args.csv)
+    # Update-convert has a few formats for parsing, we unify them all here
+    if args.update_convert is not None:
+        exceptionDetail = None
+        if len(args.csv) > len(args.update_convert):
+            if len(args.update_convert) == 1:
+                # Must be a single filename stem that doesn't clobber when transformations applied
+                # or a directory that already exists where existing filenames do not clobber
+
+                # Directory check first
+                exports = []
+                possible_path = pathlib.Path(args.update_convert[0])
+                if possible_path.exists() and possible_path.is_dir():
+                    for name in args.csv:
+                        exports.append(possible_path.joinpath(pathlib.Path(name).name))
+                        if exports[-1].exists():
+                            exceptionDetail = f"Directory '{args.update_convert[0]}' exists, but names would clobber."+\
+                                               "\nEnsure that original data is preserved elsewhere, then rerun."
+                            break
+                # Single filename stem
+                else:
+                    basedir = possible_path.parent
+                    stem = possible_path.stem
+                    for name in args.csv:
+                        exports.append(basedir.joinpath(stem+pathlib.Path(name).name))
+                        if exports[-1].exists():
+                            exceptionDetail = f"Stem '{args.update_convert[0]}' would clobber one or more CSVs"+\
+                                               "\nEnsure that this stem + CSV names will not overwrite data, then rerun."
+                            break
+                # Update output names for these rules using the export list
+                args.update_convert = exports
+            # Did not fully specify the names to replace
+            else:
+                exceptionDetail = "Not all CSVs were aliased. Provide a single stem, an output directory, or rename each input."
+        elif len(args.csv) == len(args.update_convert):
+            # Still enforce no-clobber
+            for name in args.update_convert:
+                if pathlib.Path(name).exists():
+                    exceptionDetail = f"The CSV '{name}' already exists -- ensure each CSV name will not overwrite data, then rerun."
+                    break
+        else:
+            exceptionDetail = f"More output names provided to --update-convert than input CSVs --csv."
+        if exceptionDetail is not None:
+            raise ValueError(exceptionDetail)
     return args
 
 def deinterpret(csvs, names, args):
     param_cols = [f'p{_}' for _ in range(10)] + ['c0']
-    topCache = TopologyCache()
+    topCache = OldTopologyCache()
     top_keymap = {'P7': '-ingrid', 'P8': '-outgrid'}
     for (csv, name, save) in zip(csvs, names, args.save):
         original_len = len(csv)
