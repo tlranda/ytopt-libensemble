@@ -12,6 +12,9 @@ def build(prs=None):
     if prs is None:
         prs = argparse.ArgumentParser()
     prs.add_argument("--directory", "--directories", nargs="*", help="Directories to directly include in results aggregration (default: None)")
+    prs.add_argument("--rename", nargs="*", help="Rename each directory from --directory (cannot use with --crawl-directory)")
+    prs.add_argument("--title", default=None, help="Set plot title")
+    prs.add_argument("--no-resort", action="store_true", help="Enforce order of directories from command line (default: re-sorted)")
     prs.add_argument("--crawl-directory", "--crawl-directories", nargs="*", help="Directories to crawl for subdirectory names (default: None)")
     prs.add_argument("--highlight", type=int, default=-1, help="Focus results on the nth (0-indexed) directory (default: ALL directories)")
     prs.add_argument("--save", default=None, help="Save figure rather than display (to this path, if given)")
@@ -37,6 +40,14 @@ def parse(prs=None, args=None):
         for dirname in args.crawl_directory:
             for found in os.listdir(dirname):
                 args.directory.extend([name for name in found if os.path.isdir(os.path.join(dirname,name))])
+    if args.crawl_directory is not None and args.rename is not None:
+        no_crawl_rename = "Cannot specify --crawl-directory and --rename at the same time. Use --directory instead"
+        raise ValueError(no_crawl_rename)
+    elif len(args.rename) > 0 and len(args.rename) != len(args.directory):
+        mismatch_length = "Length of --directory and --rename arguments must be the same"
+        raise ValueError(mismatch_length)
+    elif len(args.rename) == 0:
+        args.rename = [None] * len(args.directory)
     if args.highlight >= 0:
         args.directory = [args.directory[args.highlight]]
     if type(args.quantile) is float:
@@ -45,24 +56,35 @@ def parse(prs=None, args=None):
         args.quantile += [args.quantile[-1]] * (len(args.directory) - len(args.quantile))
     args.quantile = np.asarray(args.quantile)
     args.directory = np.asarray(args.directory)
-    directory_sort = np.argsort(args.directory)
-    args.directory = args.directory[directory_sort]
-    args.quantile = args.quantile[directory_sort]
+    args.rename = np.asarray(args.rename)
+    if not args.no_resort:
+        directory_sort = np.argsort(args.directory)
+        args.directory = args.directory[directory_sort]
+        args.rename = args.rename[directory_sort]
+        args.quantile = args.quantile[directory_sort]
     return args
 
 def load(args):
     frames = []
     names = []
-    for dirname in args.directory:
+    for dirname, rename in zip(args.directory, args.rename):
+        if not os.path.isdir(dirname):
+            continue
         try:
             frame = pd.read_csv(os.path.join(dirname, "manager_results.csv"))
         except FileNotFoundError:
             try:
                 frame = pd.read_csv(os.path.join(dirname, "results.csv"))
             except FileNotFoundError:
-                no_results = f"No results file found in {dirname} -- skipping"
-                warnings.warn(no_results)
-                continue
+                # If there's only one CSV there to pick, use that one
+                csvs = [_ for _ in os.listdir(dirname) if (len(_) > 4 and _[-4:] == b'.csv')]
+                if len(csvs) == 1:
+                    print(f"Did not find normal CSV name (manager_results.csv or results.csv), but found {csvs[0]}")
+                    frame = pd.read_csv(os.path.join(dirname, csvs[0].decode()))
+                else:
+                    no_results = f"No results CSV file found in {dirname} -- skipping"
+                    warnings.warn(no_results)
+                    continue
             else:
                 print(f"No manager results -- substituting with worker results")
         # Invert flops metric for evaluation
@@ -92,7 +114,10 @@ def load(args):
         if args.normalize_y:
             frame['GFLOPS'] = (frame['GFLOPS'] - frame['GFLOPS'].min()) / (frame['GFLOPS'].max() - frame['GFLOPS'].min())
         frames.append(frame)
-        names.append(dirname.rstrip('/').split('/')[-1] + f" ({len(frame)})")
+        if rename is None:
+            names.append(dirname.rstrip('/').split('/')[-1] + f" ({len(frame)})")
+        else:
+            names.append(rename + f" ({len(frame)})")
     return frames, names
 
 def observations(frame, args):
@@ -192,7 +217,9 @@ def visualizations(frames, names, args):
     if args.smart_names:
         ax.set_title(smart_title(names))
         names = [smart_name(_) for _ in names]
-    plt.legend(leglines, names, loc='center right')
+    plt.legend(leglines, names, loc='center right', title="Data Source (#Samples)")
+    if args.title is not None:
+        plt.title(args.title)
     if args.save is None:
         print("Showing plots")
         plt.show()
@@ -204,6 +231,7 @@ def visualizations(frames, names, args):
 if __name__ == '__main__':
     args = parse()
     frames, names = load(args)
+    print(names)
     if args.stats:
         for frame in frames:
             observations(frame, args)
