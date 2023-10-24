@@ -66,6 +66,8 @@ def minSurfaceSplit(X, Y, Z, procs):
     # Topologies are reversed such that the topology order is X-1-1 to 1-1-X
     # This matches previous version ordering
     return best_grid, list(reversed(topologies))
+def minSurfaceSplit1D(X, procs):
+    return minSurfaceSplit(X, X, X, procs)
 
 
 def build():
@@ -141,10 +143,16 @@ def parse(args=None, prs=None):
                 exceptionDetail = "Not all CSVs were aliased. Provide a single stem, an output directory, or rename each input."
         elif len(args.csv) == len(args.update_convert):
             # Still enforce no-clobber
-            for name in args.update_convert:
-                if pathlib.Path(name).exists():
-                    exceptionDetail = f"The CSV '{name}' already exists -- ensure each CSV name will not overwrite data, then rerun."
+            exports = []
+            for csv, name in zip(args.csv, args.update_convert):
+                dest = pathlib.Path(name)
+                if dest.is_dir():
+                    dest = dest.joinpath(pathlib.Path(csv).name)
+                if dest.exists():
+                    exceptionDetail = f"The CSV '{dest}' already exists -- ensure each CSV name will not overwrite data, then rerun."
                     break
+                exports.append(dest)
+            args.update_convert = exports
         else:
             exceptionDetail = f"More output names provided to --update-convert than input CSVs --csv."
         if exceptionDetail is not None:
@@ -153,11 +161,7 @@ def parse(args=None, prs=None):
         args.update_convert = [None] * len(args.csv)
     return args
 
-def old_float_to_values(csv):
-    # De-interpret the topology
-    top_keymap = {'P7': '-ingrid', 'P8': '-outgrid'}
-    topCache = OldTopologyCache()
-    original_len = len(csv)
+def get_sequence(csv, args):
     # Reconstruct architecture info from records
     try:
         TPN = list(set(csv['threads_per_node']))[0]
@@ -187,6 +191,15 @@ def old_float_to_values(csv):
     # Ensure max_depth is always in the list
     if max_depth not in sequence:
         sequence = sorted(sequence+[max_depth])
+    return sequence
+
+
+def old_float_to_values(csv, args):
+    # De-interpret the topology
+    top_keymap = {'P7': '-ingrid', 'P8': '-outgrid'}
+    topCache = OldTopologyCache()
+    original_len = len(csv)
+    sequence = get_sequence(csv, args)
 
     altered_topologies = np.empty((original_len, len(top_keymap.keys())), dtype=object)
     altered_sequence = np.empty((original_len, 1), dtype=int)
@@ -223,11 +236,38 @@ def old_float_to_values(csv):
         csv[key] = replacement
     return csv
 
+def new_float_to_values(csv, args):
+    original_len = len(csv)
+
+    # Assume only one value of P1 and one value of MPI_RANKS
+    cube_shape, mpi_ranks = csv.loc[csv.index[0], ['p1','mpi_ranks']]
+    d_topology, all_topologies = minSurfaceSplit1D(cube_shape, mpi_ranks)
+    sequence = get_sequence(csv, args)
+
+    # Update all default topologies to the value they should actually have
+    p7_default_index = csv.index[np.where(csv['p7'] == ' ')]
+    p8_default_index = csv.index[np.where(csv['p8'] == ' ')]
+    csv.loc[p7_default_index, 'p7'] = d_topology
+    csv.loc[p8_default_index, 'p8'] = d_topology
+
+    # Add the p7-p9 float representations
+    new_float = np.empty(original_len, dtype=float)
+    # Lookups and insertions
+    for key, lookup in zip(['p7','p8','p9'], ([all_topologies] * 2)+[sequence]):
+        topo_len = len(lookup)-1
+        for idx, topo in enumerate(lookup):
+            index = np.where(csv[key] == topo)
+            new_float[index] = idx/topo_len
+        csv.insert(csv.columns.tolist().index('c0'), key+'_float', new_float)
+
+    return csv
+
+
 def deinterpret(csvs, names, update_convert, args):
     param_cols = [f'p{_}' for _ in range(10)] + ['c0']
     for (csv, name, conversion, save) in zip(csvs, names, update_convert, args.save):
         original_len = len(csv)
-        csv = old_float_to_values(csv)
+        csv = old_float_to_values(csv, args)
         # If not update-converting, we just remap and possibly save
         if conversion is None:
             if args.count_collisions:
@@ -287,9 +327,8 @@ def deinterpret(csvs, names, update_convert, args):
 
         # When update-converting, remapping is different
         else:
-            cubeshape = csv['p1'].values.tolist()[0]
-            mpiranks = csv['mpi-ranks'].values.tolist()[0]
-            default_topology, convert_topologies = minSurfaceSplit(cubeshape, cubeshape, cubeshape, mpiranks)
+            new_csv = new_float_to_values(csv, args)
+            new_csv.to_csv(conversion, index=False)
 
 
 def main(args=None):
