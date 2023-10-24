@@ -26,7 +26,7 @@ for rank_idx in ${!mpi_ranks[@]}; do
     call="python libEwrapper.py --mpi-ranks ${n_ranks} --worker-timeout 300 --application-scale ${app_scale} --cpu-override 256 --cpu-ranks-per-node 64 --ensemble-workers ${n_workers} --max-evals 200 --configure-environment craympi --machine-identifier theta-knl --system theta --ens-dir-path Theta_YTOPT_NO_TOP_${n_nodes}n_${app_scale}a --ens-template run_ytopt.py --ens-script qsub_tl.batch --launch-job --display-results";
     date;
     echo "${call}";
-    #eval "${call}";
+    eval "${call}";
     date;
     calls=$(( ${calls} + 1 ));
 done;

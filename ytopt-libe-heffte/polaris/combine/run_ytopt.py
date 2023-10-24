@@ -211,9 +211,11 @@ default_topology, topologies = minSurfaceSplit(APP_SCALE_X, APP_SCALE_Y, APP_SCA
 
 # arg8
 #p7 = CSH.CategoricalHyperparameter(name='p7', choices=topologies, default_value=default_topology)
+print(f"TOPOLOGIES DISABLED -- ALWAYS USING DEFAULT TOPOLOGY OF {MPI_RANKS}x1x1")
 p7 = CSH.Constant(name='p7', value=f'{MPI_RANKS} 1 1')
 # arg9
 #p8 = CSH.CategoricalHyperparameter(name='p8', choices=topologies, default_value=default_topology)
+print(f"TOPOLOGIES DISABLED -- ALWAYS USING DEFAULT TOPOLOGY OF {MPI_RANKS}x1x1")
 p8 = CSH.Constant(name='p8', value=f'{MPI_RANKS} 1 1')
 # arg10 number threads per MPI process
 p9 = CSH.OrdinalHyperparameter(name='p9', sequence=sequence, default_value=max_depth)
