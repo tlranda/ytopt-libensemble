@@ -9,10 +9,10 @@ source /home/trandall/polaris_libpressio_env.sh;
 cd /home/trandall/ytune_23/tlranda-ytopt-libensemble/ytopt-libe-libpressio;
 
 jsons=( 'qoz' ); # 'sz3'
-mpi_ranks=( 256 );
-#mpi_ranks=( 4 8 16 32 64 256 492 );
-#  nodes =   1 2  4  8 16  64 123
-workers=( 2 );
+mpi_ranks=( 64 128 );
+#mpi_ranks=( 4 8 16 32 64 128 256 492 );
+#  nodes =   1 2  4  8 16  32  64 123
+workers=( 4 );
 # MAX nodes = 64*2+1 = 129 (26% cluster capacity)
 # POLARIS has MAX 496 on PROD queue
 calls=0;
