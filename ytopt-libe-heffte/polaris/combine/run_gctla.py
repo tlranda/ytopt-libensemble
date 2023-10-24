@@ -95,6 +95,9 @@ for (arg_name, required, cast_type) in arg_casts:
 
 # Variables that will be sed-edited to control scaling
 APP_SCALE = 1024
+APP_SCALE_X = APP_SCALE
+APP_SCALE_Y = APP_SCALE
+APP_SCALE_Z = APP_SCALE
 MPI_RANKS = 64
 # SEEDING
 CONFIGSPACE_SEED = 1234
@@ -117,7 +120,9 @@ cs = CS.ConfigurationSpace(seed=CONFIGSPACE_SEED)
 # arg1  precision
 p0 = CSH.CategoricalHyperparameter(name='p0', choices=["double", "float"], default_value="float")
 # arg2  3D array dimension size
-p1 = CSH.Constant(name='p1', value=APP_SCALE)
+p1x = CSH.Constant(name='p1x', value=APP_SCALE_X)
+p1y = CSH.Constant(name='p1y', value=APP_SCALE_Y)
+p1z = CSH.Constant(name='p1z', value=APP_SCALE_Z)
 #p1 = CSH.OrdinalHyperparameter(name='p1', sequence=[64,128,256,512,1024], default_value=128)
 # arg3  reorder
 p2 = CSH.CategoricalHyperparameter(name='p2', choices=["-no-reorder", "-reorder"," "], default_value=" ")
@@ -129,12 +134,6 @@ p4 = CSH.CategoricalHyperparameter(name='p4', choices=["-p2p", "-p2p_pl"," "], d
 p5 = CSH.CategoricalHyperparameter(name='p5', choices=["-pencils", "-slabs"," "], default_value=" ")
 # arg7
 p6 = CSH.CategoricalHyperparameter(name='p6', choices=["-r2c_dir 0", "-r2c_dir 1","-r2c_dir 2", " "], default_value=" ")
-# arg8
-p7 = CSH.UniformFloatHyperparameter(name='p7', lower=0, upper=1)
-# arg9
-p8 = CSH.UniformFloatHyperparameter(name='p8', lower=0, upper=1)
-# number of threads is hardware-dependent
-p9 = CSH.UniformFloatHyperparameter(name='p9', lower=0, upper=1)
 
 # Cross-architecture is out-of-scope for now so we determine this for the current platform and leave it at that
 cpu_override = None
@@ -172,7 +171,7 @@ else:
 print(f"Set ranks_per_node to {ranks_per_node}"+"\n")
 
 NODE_COUNT = max(MPI_RANKS // ranks_per_node,1)
-print(f"APP_SCALE (AKA Problem Size X, X, X) = {APP_SCALE} x3")
+print(f"APP_SCALE (AKA Problem Size X, Y, Z) = {APP_SCALE_X}, {APP_SCALE_Y}, {APP_SCALE_Z}")
 print(f"MPI_RANKS (AKA System Size X * Y = Z) = {NODE_COUNT} * {ranks_per_node} = {MPI_RANKS}")
 # Don't exceed #threads across total ranks
 max_depth = threads_per_node // ranks_per_node
@@ -193,10 +192,46 @@ if max_depth not in sequence:
     sequence = sorted(sequence+[max_depth])
 print(f"Depths are based on {threads_per_node} threads on each node, shared across {ranks_per_node} MPI ranks on each node")
 print(f"Selectable depths are: {sequence}"+"\n")
-# arg10 number threads per MPI process
-#p9 = CSH.OrdinalHyperparameter(name='p9', sequence=sequence, default_value=max_depth)
 
-cs.add_hyperparameters([p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, c0])
+# Minimum surface splitting solve is used as the default topology for FFT (picked by heFFTe when in-grid and/or out-grid topology == ' ')
+def surface(fft_dims, grid):
+    # Volume of FFT assigned to each process
+    box_size = (np.asarray(fft_dims) / np.asarray(grid)).astype(int)
+    # Sum of exchanged surface areas
+    return (box_size * np.roll(box_size, -1)).sum()
+def minSurfaceSplit(X, Y, Z, procs):
+    fft_dims = (X, Y, Z)
+    best_grid = (1, 1, procs)
+    best_surface = surface(fft_dims, best_grid)
+    best_grid = " ".join([str(_) for _ in best_grid])
+    topologies = []
+    # Consider other topologies that utilize all ranks
+    for i in range(1, procs+1):
+        if procs % i == 0:
+            remainder = int(procs / float(i))
+            for j in range(1, remainder+1):
+                candidate_grid = (i, j, int(remainder/j))
+                if np.prod(candidate_grid) != procs:
+                    continue
+                strtopology = " ".join([str(_) for _ in candidate_grid])
+                topologies.append(strtopology)
+                candidate_surface = surface(fft_dims, candidate_grid)
+                if candidate_surface < best_surface:
+                    best_surface = candidate_surface
+                    best_grid = strtopology
+    # Topologies are reversed such that the topology order is X-1-1 to 1-1-X
+    # This matches previous version ordering
+    return best_grid, list(reversed(topologies))
+default_topology, topologies = minSurfaceSplit(APP_SCALE_X, APP_SCALE_Y, APP_SCALE_Z, MPI_RANKS)
+
+# arg8
+p7 = CSH.CategoricalHyperparameter(name='p7', choices=topologies, default_value=default_topology)
+# arg9
+p8 = CSH.UniformFloatHyperparameter(name='p8', choices=topologies, default_value=default_topology)
+# number of threads is hardware-dependent
+p9 = CSH.OrdinalHyperparameter(name='p9', sequence=sequence, default_value=max_depth)
+
+cs.add_hyperparameters([p0, p1x, p1y, p1z, p2, p3, p4, p5, p6, p7, p8, p9, c0])
 
 MACHINE_IDENTIFIER = "tbd"
 print(f"Identifying machine as {MACHINE_IDENTIFIER}"+"\n")
@@ -209,15 +244,33 @@ MACHINE_INFO = {
     'libE_workers': num_sim_workers,
     'app_timeout': 300,
     'sequence': sequence,
+    'topologies': topologies,
 }
 
 # For efficiency's sake, the condition makes batches of 100 samples at a time
 conditions = [Condition({'mpi_ranks': user_args['constraint-sys'],
-                         'p1': user_args['constraint-app']},
+                         'p1x': user_args['constraint-app-x'],
+                         'p1y': user_args['constraint-app-y'],
+                         'p1z': user_args['constraint-app-z'],
+                         },
                         num_rows=100)]
-constraints = [{'constraint_class': 'ScalarRange', # App scale limit
+constraints = [{'constraint_class': 'ScalarRange', # App scale X limit
                     'constraint_parameters': {
                         'column_name': 'p1',
+                        'low_value': 64,
+                        'high_value': 2048,
+                        'strict_boundaries': False,},
+                    },
+               {'constraint_class': 'ScalarRange', # App scale Y limit
+                    'constraint_parameters': {
+                        'column_name': 'p1y',
+                        'low_value': 64,
+                        'high_value': 2048,
+                        'strict_boundaries': False,},
+                    },
+               {'constraint_class': 'ScalarRange', # App scale Z limit
+                    'constraint_parameters': {
+                        'column_name': 'p1z',
                         'low_value': 64,
                         'high_value': 2048,
                         'strict_boundaries': False,},
@@ -232,7 +285,7 @@ constraints = [{'constraint_class': 'ScalarRange', # App scale limit
               ]
 # Fetch problem instance and set its space based on alterations
 import gc_tla_problem
-app_scale_name = gc_tla_problem.lookup_ival[(NODE_COUNT, APP_SCALE)]
+app_scale_name = gc_tla_problem.lookup_ival(NODE_COUNT, APP_SCALE_X, APP_SCALE_Y, APP_SCALE_Z)
 warnings.simplefilter('ignore') # I want the problem class to raise this warning, but I know about it and will properly handle it. No need to hear about the warning
 problem = getattr(gc_tla_problem, app_scale_name) #f"{app_scale_name}_{NODE_COUNT}")
 warnings.simplefilter('default')
@@ -287,7 +340,8 @@ if warned:
     print("Will continue on best-effort basis with remaining files")
 print(f"GC will be fitted against data from: {data_files}")
 data = pd.concat([pd.read_csv(_) for _ in data_files])
-data_trimmed = data[['c0',]+[f'p{_}' for _ in range(10)]+['mpi_ranks', 'FLOPS']]
+# TODO: Recontextualize ALL loaded data here or above when initially loaded
+data_trimmed = data[['c0','p0','p1x','p1y','p1z']+[f'p{_}' for _ in range(2,10)]+['mpi_ranks', 'FLOPS']]
 # Drop configurations that had errors (not runtime failures); indicated by FLOPS >= 2.0
 data_trimmed = data_trimmed[data_trimmed['FLOPS'] < 2.0]
 metadata = SingleTableMetadata()
@@ -405,7 +459,7 @@ for simulatorID in range(2, 2+num_sim_workers):
 # Declare the sim_f to be optimized, and the input/outputs
 sim_specs = {
     'sim_f': init_obj,
-    'in': [f'p{_}' for _ in range(10)] + ['c0'],
+    'in': ['p0','p1x','p1y','p1z'] + [f'p{_}' for _ in range(2,10)] + ['c0'],
     'out': [('FLOPS', float, (1,)),
             ('elapsed_sec', float, (1,)),
             ('machine_identifier','<U30', (1,)),
@@ -413,6 +467,9 @@ sim_specs = {
             ('threads_per_node', int, (1,)),
             ('ranks_per_node', int, (1,)),
             ('gpu_enabled', bool, (1,)),
+            ('p7_float', float, (1,)),
+            ('p8_float', float, (1,)),
+            ('p9_float', float, (1,)),
             ('libE_id', int, (1,)),
             ('libE_workers', int, (1,)),],
     'user': {
@@ -428,26 +485,25 @@ gen_specs = {
             # MUST MATCH ORDER OF THE CONFIGSPACE HYPERPARAMETERS EXACTLY
             ('c0', "<U24", (1,)),
             ('p0', "<U24", (1,)),
-            ('p1', int, (1,)),
+            ('p1x', int, (1,)),
+            ('p1y', int, (1,)),
+            ('p1z', int, (1,)),
             ('p2', "<U24", (1,)),
             ('p3', "<U24", (1,)),
             ('p4', "<U24", (1,)),
             ('p5', "<U24", (1,)),
             ('p6', "<U24", (1,)),
-            ('p7', float, (1,)),
-            ('p8', float, (1,)),
-            ('p9', float, (1,)),
+            ('p7', "<U24", (1,)),
+            ('p8', "<U24", (1,)),
+            ('p9', int, (1,)),
             ],
     'persis_in': sim_specs['in'] +\
-                 ['FLOPS'] +\
-                 ['elapsed_sec'] +\
+                 ['FLOPS', 'elapsed_sec'] +\
                  ['machine_identifier'] +\
-                 ['mpi_ranks'] +\
-                 ['threads_per_node'] +\
-                 ['ranks_per_node'] +\
+                 ['mpi_ranks', 'threads_per_node', 'ranks_per_node'] +\
                  ['gpu_enabled'] +\
-                 ['libE_id'] +\
-                 ['libE_workers'],
+                 ['p7_float', 'p8_float', 'p9_float'] +\
+                 ['libE_id', 'libE_workers'],
     'user': {
         'machine_info': MACHINE_INFO,
         'model': model, # provide generation object

@@ -102,7 +102,7 @@ def myobj(point: dict, params: list, workerID: int) -> float:
                             (1024,1024,1024): 60.0,
                            }
             known_timeouts.update(gpu_timeouts)
-        xyz = (point['p1x'], point['p1y'], point['p1z'])
+        xyz = (int(point['p1x']), int(point['p1y']), int(point['p1z']))
         if xyz in known_timeouts.keys():
             machine_info['app_timeout'] = known_timeouts[xyz]
 
@@ -118,9 +118,12 @@ def myobj(point: dict, params: list, workerID: int) -> float:
         x = np.asarray_chkfinite(point.values())
         obj = Plopper(plopper_template, './', machine_format_str)
         values = [point[param] for param in params]
-        os.environ["OMP_NUM_THREADS"] = str(value[9])
+        # Fix topology
+        values[9] = f"-ingrid {values[9]}"
+        values[10] = f"-outgrid {values[10]}"
+        os.environ["OMP_NUM_THREADS"] = str(values[9])
         params = [i.upper() for i in params]
-        results = obj.findRuntime(value, params, workerID,
+        results = obj.findRuntime(values, params, workerID,
                                   machine_info['libE_workers'],
                                   machine_info['app_timeout'],
                                   machine_info['mpi_ranks'],
