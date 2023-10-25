@@ -244,6 +244,13 @@ def new_float_to_values(csv, args):
     d_topology, all_topologies = minSurfaceSplit1D(cube_shape, mpi_ranks)
     sequence = get_sequence(csv, args)
 
+    # Drop former P1 value and split into P1x, P1y, and P1z
+    p1_values = csv['p1'].values
+    csv.drop(columns=['p1'], inplace=True)
+    csv.insert(csv.columns.tolist().index('p2'), 'p1x', p1_values)
+    csv.insert(csv.columns.tolist().index('p2'), 'p1y', p1_values)
+    csv.insert(csv.columns.tolist().index('p2'), 'p1z', p1_values)
+
     # Update all default topologies to the value they should actually have
     p7_default_index = csv.index[np.where(csv['p7'] == ' ')]
     p8_default_index = csv.index[np.where(csv['p8'] == ' ')]

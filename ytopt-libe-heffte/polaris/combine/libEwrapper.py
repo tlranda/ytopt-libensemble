@@ -78,9 +78,15 @@ def build():
     # GaussianCopula
     gc = parser.add_argument_group("GaussianCopula", "Arguments for Gaussian Copula (must use --libensemble-target=run_gctla.py)")
     gc.add_argument("--gc-sys", type=int, default=None,
-                    help="# MPI ranks targeted by constrained GC (default: Defers to --mpi-ranks)")
+                    help="GC's target # MPI ranks (default: Defers to --mpi-ranks)")
     gc.add_argument("--gc-app", type=int, default=None,
-                    help="Application size targeted by constrained GC (default: Defers to --application-scale)")
+                    help="Default FFT dimension scale for unspecified --gc-app-[xyz] arguments (default: Defers to --application-scale)")
+    gc.add_argument("--gc-app-x", type=int, default=None,
+                    help="GC's target FFT size in the X-dimension (default: --gc-app value)")
+    gc.add_argument("--gc-app-y", type=int, default=None,
+                    help="GC's target FFT size in the Y-dimension (default: --gc-app value)")
+    gc.add_argument("--gc-app-z", type=int, default=None,
+                    help="GC's target FFT size in the Z-dimension (default: --gc-app value)")
     gc.add_argument("--gc-input", nargs="+", default=None,
                     help="Inputs to provide to the GC (no default; must be specified!)")
     gc.add_argument("--gc-ignore", nargs="*", default=None,
@@ -173,8 +179,16 @@ def parse(prs=None, args=None):
     # Gaussian Copula arguments
     if args.gc_sys is None:
         args.gc_sys = args.mpi_ranks
+    # First, FFT based on app-scale unless explicitly specified
     if args.gc_app is None:
         args.gc_app = args.application_scale
+    # Then each dimension based on FFT default unless explicitly specified
+    if args.gc_app_x is None:
+        args.gc_app_x = args.gc_app
+    if args.gc_app_y is None:
+        args.gc_app_y = args.gc_app
+    if args.gc_app_z is None:
+        args.gc_app_z = args.gc_app
     if type(args.gc_input) is str:
         args.gc_input = [args.gc_input]
     # Argparse is bad and doesn't put nargs>=1 into lists by default
@@ -189,7 +203,7 @@ def parse(prs=None, args=None):
         args.bonus_runtime_args += f" --resume {' '.join(args.resume)}"
     if 'gc' in args.ens_template_export.stem:
         try:
-            args.bonus_runtime_args += f" --constraint-sys {args.gc_sys} --constraint-app {args.gc_app} --input {' '.join(args.gc_input)} --auto-budget={args.gc_auto_budget}"
+            args.bonus_runtime_args += f" --constraint-sys {args.gc_sys} --constraint-app-x {args.gc_app_x} --constraint-app-y {args.gc_app_y} --constraint-app-z {args.gc_app_z} --input {' '.join(args.gc_input)} --auto-budget={args.gc_auto_budget}"
             # These can be set for any GC run
             gc_args = ['gc_ignore', 'gc_predictions_only', 'gc_initial_quantile', ]
             target_args = ['--ignore', '--predictions-only', '--initial-quantile', ]
@@ -344,7 +358,7 @@ export IBV_FORK_SAFE=1; # May fix some MPI issues where processes call fork()
     job_contents = f"""#!/bin/bash -x
 #PBS -l walltime=01:00:00
 #PBS -l select={1+(args.mpi_ranks*args.ensemble_workers)}:system={args.system}
-#PBS -l filesystems=home:grand:eagle
+#PBS -l filesystems=home
 #PBS -A EE-ECP
 #PBS -q prod
 

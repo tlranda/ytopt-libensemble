@@ -66,7 +66,8 @@ for meta_idx, idx in enumerate(start_arg_idxs[:-1]):
             value = value[0]
     user_args[key] = value
 
-req_settings = ['max-evals', 'input', 'constraint-sys', 'constraint-app']
+req_settings = ['max-evals', 'input', 'constraint-sys',
+                'constraint-app-x', 'constraint-app-y', 'constraint-app-z']
 assert all([opt in user_args for opt in req_settings]), \
         f"Required settings missing: {set(req_settings).difference(set(user_args.keys()))}."+"\n"+\
         f"Specify each setting in {req_settings}"
@@ -79,7 +80,9 @@ def boolcast(in_str):
     return (type(in_str) is str and in_str in ['True', 'true', 't', 'on', '1', 'y', 'yes']) or (type(in_str) is not str and bool(in_str))
 arg_casts = [('max-evals', True, int),
              ('constraint-sys', True, int),
-             ('constraint-app', True, int),
+             ('constraint-app-x', True, int),
+             ('constraint-app-y', True, int),
+             ('constraint-app-z', True, int),
              ('auto-budget', False, boolcast),
              ('initial-quantile', False, float),
              ('min-quantile', False, float),
@@ -227,7 +230,7 @@ default_topology, topologies = minSurfaceSplit(APP_SCALE_X, APP_SCALE_Y, APP_SCA
 # arg8
 p7 = CSH.CategoricalHyperparameter(name='p7', choices=topologies, default_value=default_topology)
 # arg9
-p8 = CSH.UniformFloatHyperparameter(name='p8', choices=topologies, default_value=default_topology)
+p8 = CSH.CategoricalHyperparameter(name='p8', choices=topologies, default_value=default_topology)
 # number of threads is hardware-dependent
 p9 = CSH.OrdinalHyperparameter(name='p9', sequence=sequence, default_value=max_depth)
 
@@ -340,8 +343,14 @@ if warned:
     print("Will continue on best-effort basis with remaining files")
 print(f"GC will be fitted against data from: {data_files}")
 data = pd.concat([pd.read_csv(_) for _ in data_files])
-# TODO: Recontextualize ALL loaded data here or above when initially loaded
-data_trimmed = data[['c0','p0','p1x','p1y','p1z']+[f'p{_}' for _ in range(2,10)]+['mpi_ranks', 'FLOPS']]
+# Load relevant training data
+import pdb
+pdb.set_trace()
+
+data_trimmed = data.loc[:, ['c0','p0','p1x','p1y','p1z']+[f'p{_}' for _ in range(2,10)]+['mpi_ranks', 'FLOPS']+[f'p{_}_float' for _ in range(7,10)]]
+# Recontextualize rank-specific loaded data
+pass
+data_trimmed.drop(columns=[f'p{_}_float' for _ in range(7,10)],inplace=True)
 # Drop configurations that had errors (not runtime failures); indicated by FLOPS >= 2.0
 data_trimmed = data_trimmed[data_trimmed['FLOPS'] < 2.0]
 metadata = SingleTableMetadata()
