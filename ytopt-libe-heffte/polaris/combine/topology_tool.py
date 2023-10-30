@@ -35,6 +35,7 @@ def build():
     plot.add_argument("-dc", "--default-color", dest='dc', default="y", help="Color for default configuration highlights (default: %(default)s)")
     plot.add_argument("-hc", "--highlight-color", dest='hc', default="red", help="Color for transfer configuration highlights (default: %(default)s)")
     plot.add_argument("-uc", "--unused-color", dest='uc', default="black", help="Color for inactive configurations (default: %(default)s)")
+    plot.add_argument("-s", "--save", dest='save', default=None, help="Save animation to file rather than dynamic window")
 
     return prs
 
@@ -245,15 +246,17 @@ class PlotData(RegisteredNamespace):
         # Transform labels to be more friendly to read in visual format
         self.labels = ["["+",".join([str(v) for v in l])+"]" for l in self.topologies]
 
+    def get_highlighted_proportional(self):
+        return np.where(self.colors != self.UNUSED)[0][0]/len(self.colors)
+
 class Player(FuncAnimation):
-    def __init__(self, fig, ax, plotdata, pos=(0.2, 0.92)):
+    def __init__(self, fig, ax, plotdata, always_all_artists=False):
         # Copy and set attributes
         self.container = plotdata
         self.forwards = True
         self.fig = fig
         self.ax = ax
-        # Create the tool panel where indicated
-        self.setup(pos)
+        self.always_all_artists = always_all_artists
         # Set up a wrapper function to drive frames via container callback
         def wrapper(frame, *fargs):
             self.container.i += self.forwards - (not self.forwards)
@@ -292,15 +295,23 @@ class Player(FuncAnimation):
         self.onestep()
 
     def updateArtists(self):
+        if self.always_all_artists:
+            self.ax.clear()
+            for artist in self.container.texts:
+                self.ax.add_artist(artist)
         # Was intended for blitting but that does not work at the moment
         editedArtists = []
         for t, c in zip(self.container.texts, self.container.colors):
             if t.get_color() != c:
                 t.set(color=c)
                 editedArtists.append(t)
-        return editedArtists
+        if self.always_all_artists:
+            self.fig.canvas.draw()
+            return self.container.texts
+        else:
+            return editedArtists
 
-    def default_callback(self, event):
+    def default_callback(self, event=None):
         # Change minimum number of artists for sake of potentially blitting in future
         self.container.colors[np.where(self.container.colors != self.container.UNUSED)[0][0]] = self.container.UNUSED
         self.container.colors[self.container.default_idx] = self.container.DEFAULT
@@ -311,34 +322,61 @@ class Player(FuncAnimation):
         # Ensure the user can see the default befor a frame washes it away
         self.stop()
 
-    def get_highlighted(self):
-        return np.where(self.container.colors != self.container.UNUSED)[0][0]/len(self.container.colors)
+# Toolbar to control multiple plots
+class AnimationController:
+    def __init__(self, position, *anims):
+        self.position = position
+        self.anims = anims
+        self.fig = self.anims[0].fig
+        # Sanity check for current design -- could change in the future
+        if len(self.anims) > 1:
+            for other_anim in self.anims[1:]:
+                assert other_anim.fig == self.fig
+        self.setup()
 
-    def setup(self, pos):
+    def setup(self):
         # One back
-        onebackax = self.fig.add_axes([pos[0],pos[1], 0.1, 0.05])
+        onebackax = self.fig.add_axes([self.position[0], self.position[1], 0.1, 0.05])
         self.button_oneback = matplotlib.widgets.Button(onebackax, label=u'$\u29CF$')
-        self.button_oneback.on_clicked(self.onebackward)
+        def all_one_backward(event=None):
+            for anim in self.anims:
+                anim.onebackward()
+        self.button_oneback.on_clicked(all_one_backward)
         # Back
-        backax = self.fig.add_axes([pos[0]+0.11,pos[1], 0.1, 0.05])
+        backax = self.fig.add_axes([self.position[0]+0.11, self.position[1], 0.1, 0.05])
         self.button_back = matplotlib.widgets.Button(backax, label=u'$\u25C0$')
-        self.button_back.on_clicked(self.backward)
+        def all_backward(event=None):
+            for anim in self.anims:
+                anim.backward()
+        self.button_back.on_clicked(all_backward)
         # Stop
-        stopax = self.fig.add_axes([pos[0]+0.22,pos[1],0.1,0.05])
+        stopax = self.fig.add_axes([self.position[0]+0.22, self.position[1],0.1,0.05])
         self.button_stop = matplotlib.widgets.Button(stopax, label=u'$\u25A0$')
-        self.button_stop.on_clicked(self.stop)
+        def all_stop(event=None):
+            for anim in self.anims:
+                anim.stop()
+        self.button_stop.on_clicked(all_stop)
         # Default
-        defaultax = self.fig.add_axes([pos[0]+0.33,pos[1],0.1,0.05])
+        defaultax = self.fig.add_axes([self.position[0]+0.33, self.position[1],0.1,0.05])
         self.button_default = matplotlib.widgets.Button(defaultax, label='Default')
-        self.button_default.on_clicked(self.default_callback)
+        def all_default(event=None):
+            for anim in self.anims:
+                anim.default_callback()
+        self.button_default.on_clicked(all_default)
         # Forward
-        forax = self.fig.add_axes([pos[0]+0.44,pos[1],0.1,0.05])
+        forax = self.fig.add_axes([self.position[0]+0.44, self.position[1],0.1,0.05])
         self.button_forward = matplotlib.widgets.Button(forax, label=u'$\u25B6$')
-        self.button_forward.on_clicked(self.forward)
+        def all_forward(event=None):
+            for anim in self.anims:
+                anim.forward()
+        self.button_forward.on_clicked(all_forward)
         # One Forward
-        oneforax = self.fig.add_axes([pos[0]+0.55,pos[1],0.1,0.05])
+        oneforax = self.fig.add_axes([self.position[0]+0.55, self.position[1],0.1,0.05])
         self.button_oneforward = matplotlib.widgets.Button(oneforax, label=u'$\u29D0$')
-        self.button_oneforward.on_clicked(self.oneforward)
+        def all_one_forward(event=None):
+            for anim in self.anims:
+                anim.oneforward()
+        self.button_oneforward.on_clicked(all_one_forward)
 
 # Minimum surface splitting solve is used as the default topology for FFT (picked by heFFTe when in-grid and/or out-grid topology == ' ')
 def surface(fft_dims, grid):
@@ -385,11 +423,12 @@ def callback_proportional(container):
     else:
         old_index = np.where(primary.colors != primary.unused_color)[0][0]
         primary.colors[old_index] = primary.unused_color
-        new_index = int(secondary.get_highlighted() * len(primary.colors))
+        new_index = int(secondary.get_highlighted_proportional() * len(primary.colors))
         primary.colors[new_index] = primary.highlight_color
         # Actual step may be different from indicated step value
         diff = new_index - old_index
         primary.forwards = diff > 0
+
 
 def main(args=None):
     args = parse(args)
@@ -410,7 +449,7 @@ def main(args=None):
     plot1 = PlotData(default=d1, topologies=t1, secondary=None)
     d2, t2 = minSurfaceSplit3D(args.f2x, args.f2y, args.f2z,
                                args.p2)
-    #plot2 = PlotData(default=d2, topologies=t2)
+    plot2 = PlotData(default=d2, topologies=t2)
     plotDataArgs = {'default_color': args.dc,
                     'unused_color': args.uc,
                     'highlight_color': args.hc,
@@ -418,12 +457,19 @@ def main(args=None):
                     'i': 0,
                    }
     plot1.register(primary=plot1, **plotDataArgs).concretize()
-    #plot2.register(primary=plot2, secondary=plot1, **plotDataArgs).concretize()
+    plot2.register(primary=plot2, secondary=plot1, **plotDataArgs).concretize()
 
-    anim1 = Player(fig, ax1, plot1)
-    #anim2 = Player(fig, ax2, plot2)
+    anim1 = Player(fig, ax1, plot1, args.save is not None)
+    anim2 = Player(fig, ax2, plot2, args.save is not None)
 
-    plt.show()
+    if args.save is None:
+        # Create the toolbar that controls animation
+        pos=(0.2, 0.92)
+        toolbar = AnimationController(pos, anim1, anim2)
+        plt.show()
+    else:
+        anim1.save('anim1.gif')
+        anim2.save('anim2.gif')
 
 
 if __name__ == '__main__':
