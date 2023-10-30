@@ -85,8 +85,12 @@ def load(args):
         # Maybe we don't want failures
         if args.drop_failures:
             frame = frame.loc[frame['FOM'] > 0.0]
-        frames.append(frame)
-        names.append(dirname.rstrip('/').split('/')[-1])
+        if len(frame) == 0:
+            print(f"Data found in {dirname}, but loaded as empty Pandas DataFrame{' after dropping failures' if args.drop_failures else ''}")
+            continue
+        else:
+            frames.append(frame)
+            names.append(dirname.rstrip('/').split('/')[-1])
     return frames, names
 
 def observations(frame, args):
