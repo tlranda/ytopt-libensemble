@@ -1,4 +1,7 @@
 # encoding: utf-8
+
+# Setup for playback controls based on: https://stackoverflow.com/a/44989063
+
 import argparse
 from copy import deepcopy as dcpy
 import typing
@@ -125,6 +128,12 @@ class RegisteredNamespace:
             return "--Another Registration Object--"
         elif isinstance(other, np.ndarray):
             return f"ndarray with Shape {other.shape}"
+        elif isinstance(other, dict):
+            return f"dictionary with keys: {list(other.keys())}"
+        elif isinstance(other, list):
+            if len(other) == 0 or not all([type(x)==type(other[0]) for x in other]):
+                return str(other)
+            return f"list of {len(other)} '{type(other[0])}'s"
         else:
             return str(other)
 
@@ -215,12 +224,12 @@ class PlotData(RegisteredNamespace):
         if not hasattr(self, 'other'):
             self.other = None
         # Late check on color uniqueness for better error message
-        self.color_names = ['UNUSED', 'DEFAULT', 'HIGHLIGHT']
-        self.color_values = [self.unused_color, self.default_color, self.highlight_color]
-        if len(set(self.color_values)) != 3 or len(set([matplotlib.colors.to_hex(c) for c in self.color_values])) != 3:
+        color_names = ['UNUSED', 'DEFAULT', 'HIGHLIGHT']
+        color_values = [self.unused_color, self.default_color, self.highlight_color]
+        if len(set(color_values)) != 3 or len(set([matplotlib.colors.to_hex(c) for c in color_values])) != 3:
             RepeatedColor = f"All colors must be unique: {dict((k,v) for (k,v) in zip(self.color_names, self.color_values))}"
             raise ValueError(RepeatedColor)
-        for attr, value in zip(self.color_names, self.color_values):
+        for attr, value in zip(color_names, color_values):
             setattr(self, attr, value)
         # Form coordinates based on tree shape of the topologies
         counter, x_cond, ymax = 0, self.topologies[0][0], len(set([_[0] for _ in self.topologies]))
@@ -238,51 +247,31 @@ class PlotData(RegisteredNamespace):
 
 class Player(FuncAnimation):
     def __init__(self, fig, ax, plotdata, pos=(0.2, 0.92)):
-        self.i = 0
+        # Copy and set attributes
         self.container = plotdata
-        self.min=0
-        self.max=len(self.container.colors)-1
-        self.runs = True
         self.forwards = True
-        def wrapper(i):
-            self.container.i = i
-            self.i = self.container.callback(self.container)
-            for t, c in zip(self.container.texts, self.container.colors):
-                t.set(color=c)
-            return self.i
-        self.wrapper_func = wrapper
-        import pdb
-        pdb.set_trace()
-        super().__init__(self, fig=fig, func=self.wrapper_func, frames=np.arange(self.min,self.max), save_count=self.max-self.min)
         self.fig = fig
         self.ax = ax
+        # Create the tool panel where indicated
         self.setup(pos)
+        # Set up a wrapper function to drive frames via container callback
+        def wrapper(frame, *fargs):
+            self.container.i += self.forwards - (not self.forwards)
+            self.container.callback(self.container)
+            return self.updateArtists()
+        self.wrapper_func = wrapper
         # Initialize plot
         self.ax.plot(self.container.coords[:,0], self.container.coords[:,1], 'ko', alpha=0)
         self.container.register(texts=[])
         for i in range(len(self.container.labels)):
             t = self.ax.text(self.container.coords[i,0], self.container.coords[i,1], self.container.labels[i], color=self.container.colors[i], fontsize='x-small')
             self.container.texts.append(t)
+        # FuncAnimation takes care of the rest!
+        super().__init__(fig, wrapper, frames=None, save_count=len(self.container.colors)-1)
 
-    def step(self, amount=1):
-        self.i += self.forwards-(not self.forwards)
-        # Loop
-        if self.i < self.min:
-            self.i = self.max
-        elif self.i > self.max:
-            self.i = self.min
-
-    def play(self):
-        while self.runs:
-            self.step()
-            yield self.i
-
-    def start(self):
-        self.runs=True
+    def start(self, event=None):
         self.event_source.start()
-
     def stop(self, event=None):
-        self.runs = False
         self.event_source.stop()
 
     def forward(self, event=None):
@@ -291,6 +280,10 @@ class Player(FuncAnimation):
     def backward(self, event=None):
         self.forwards = False
         self.start()
+
+    def onestep(self):
+        self.wrapper_func(self.container.i)
+        self.fig.canvas.draw_idle()
     def oneforward(self, event=None):
         self.forwards = True
         self.onestep()
@@ -298,18 +291,25 @@ class Player(FuncAnimation):
         self.forwards = False
         self.onestep()
 
-    def onestep(self):
-        self.step()
-        self.wrapper_func(self.i)
-        self.fig.canvas.draw_idle()
-        yield self.i
+    def updateArtists(self):
+        # Was intended for blitting but that does not work at the moment
+        editedArtists = []
+        for t, c in zip(self.container.texts, self.container.colors):
+            if t.get_color() != c:
+                t.set(color=c)
+                editedArtists.append(t)
+        return editedArtists
 
-    def default_callback(self):
-        self.container.colors[:] = self.container.UNUSED
+    def default_callback(self, event):
+        # Change minimum number of artists for sake of potentially blitting in future
+        self.container.colors[np.where(self.container.colors != self.container.UNUSED)[0][0]] = self.container.UNUSED
         self.container.colors[self.container.default_idx] = self.container.DEFAULT
-        # Reset self.step()
-        self.i = self.container.default_idx
+        # Skip frame # appropriately
+        self.container.i = self.container.default_idx
+        edited = self.updateArtists()
         self.fig.canvas.draw_idle()
+        # Ensure the user can see the default befor a frame washes it away
+        self.stop()
 
     def get_highlighted(self):
         return np.where(self.container.colors != self.container.UNUSED)[0][0]/len(self.container.colors)
@@ -372,16 +372,16 @@ def callback_proportional(container):
     # Unpack
     primary = container.primary
     secondary = container.secondary
-    step = container.i
+    current_frame = np.where(primary.colors != primary.unused_color)[0][0]
+    next_frame = container.i % len(primary.colors)
+    step =  next_frame - current_frame
     if secondary is None:
         # Moving from default -- color change
         if primary.colors[primary.default_idx] == primary.default_color:
-            primary.colors[primary.default_idx] == primary.highlight_color
+            primary.colors[primary.default_idx] = primary.highlight_color
         # Perform step
         primary.colors = np.roll(primary.colors, step)
         primary.forwards = step > 0
-        primary.step()
-        yield primary.i
     else:
         old_index = np.where(primary.colors != primary.unused_color)[0][0]
         primary.colors[old_index] = primary.unused_color
@@ -390,8 +390,6 @@ def callback_proportional(container):
         # Actual step may be different from indicated step value
         diff = new_index - old_index
         primary.forwards = diff > 0
-        primary.step(amount=diff)
-        yield primary.i
 
 def main(args=None):
     args = parse(args)
@@ -409,22 +407,25 @@ def main(args=None):
     # Prepare data to hook into animators
     d1, t1 = minSurfaceSplit3D(args.f1x, args.f1y, args.f1z,
                                args.p1)
-    plot1 = PlotData(default=d1, topologies=t1)
+    plot1 = PlotData(default=d1, topologies=t1, secondary=None)
     d2, t2 = minSurfaceSplit3D(args.f2x, args.f2y, args.f2z,
                                args.p2)
-    plot2 = PlotData(default=d2, topologies=t2)
+    #plot2 = PlotData(default=d2, topologies=t2)
     plotDataArgs = {'default_color': args.dc,
                     'unused_color': args.uc,
                     'highlight_color': args.hc,
-                    'callback': args.callback,}
+                    'callback': args.callback,
+                    'i': 0,
+                   }
     plot1.register(primary=plot1, **plotDataArgs).concretize()
-    plot2.register(primary=plot2, secondary=plot1, **plotDataArgs).concretize()
+    #plot2.register(primary=plot2, secondary=plot1, **plotDataArgs).concretize()
 
     anim1 = Player(fig, ax1, plot1)
-    anim2 = Player(fig, ax2, plot2)
+    #anim2 = Player(fig, ax2, plot2)
 
     plt.show()
 
 
 if __name__ == '__main__':
     main()
+
