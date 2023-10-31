@@ -29,13 +29,14 @@ def build():
 
     control = prs.add_argument_group("Control program behavior")
     callbacks = list(get_callbacks().keys())
-    control.add_argument('--callback', choices=callbacks, default=callbacks[0], help="Determines how mappings are performed")
+    control.add_argument('--callback', choices=callbacks, default=callbacks[0], help="Determines how mappings are performed (default: %(default)s)")
 
     plot = prs.add_argument_group("Plotting parameters (set of colors must be unique!)")
     plot.add_argument("-dc", "--default-color", dest='dc', default="y", help="Color for default configuration highlights (default: %(default)s)")
     plot.add_argument("-hc", "--highlight-color", dest='hc', default="red", help="Color for transfer configuration highlights (default: %(default)s)")
     plot.add_argument("-uc", "--unused-color", dest='uc', default="black", help="Color for inactive configurations (default: %(default)s)")
-    plot.add_argument("-s", "--save", dest='save', default=None, help="Save heatmap'd labels to file rather than dynamic window with animation")
+    plot.add_argument("-ll", "--log-labels", dest='ll', action="store_true", help="Use logarithmic levels for labels rather than actual processor counts (default: %(default)s)")
+    plot.add_argument("-s", "--save", dest='save', default=None, help="Save heatmap'd labels to this file (image) rather than dynamic window with animations")
 
     return prs
 
@@ -244,10 +245,20 @@ class PlotData(RegisteredNamespace):
         self.colors = np.array([self.unused_color]*len(self.topologies))
         self.colors[self.default_idx] = self.DEFAULT
         # Transform labels to be more friendly to read in visual format
-        self.labels = ["["+",".join([str(v) for v in l])+"]" for l in self.topologies]
+        if hasattr(self, 'log_labels') and self.log_labels:
+            self.labels = [",".join([str(int(np.log2(v))) for v in l]) for l in self.topologies]
+        else:
+            self.labels = ["["+",".join([str(v) for v in l])+"]" for l in self.topologies]
+        # Topology depth
+        self.maxdepth = int(np.log2(np.prod(self.topologies[0])))
 
     def get_highlighted_proportional(self):
         return np.where(self.colors != self.UNUSED)[0][0]/len(self.colors)
+
+    def get_highlighted_logarithmic(self):
+        current_topology = self.topologies[np.where(self.colors != self.UNUSED)[0][0]]
+        return np.log2(current_topology) / self.maxdepth
+
 
 class Player(FuncAnimation):
     def __init__(self, fig, axes, plotdatas, always_all_artists=False):
@@ -485,10 +496,37 @@ def callback_proportional(container):
         diff = new_index - old_index
         primary.forwards = diff > 0
 
+def callback_logarithmic(container):
+    # Unpack
+    primary = container.primary
+    secondary = container.secondary
+    current_frame = np.where(primary.colors != primary.unused_color)[0][0]
+    next_frame = container.i % len(primary.colors)
+    step =  next_frame - current_frame
+    if secondary is None:
+        # Moving from default -- color change
+        if primary.colors[primary.default_idx] == primary.default_color:
+            primary.colors[primary.default_idx] = primary.highlight_color
+        # Perform step
+        primary.colors = np.roll(primary.colors, step)
+        primary.forwards = step > 0
+    else:
+        old_index = np.where(primary.colors != primary.unused_color)[0][0]
+        primary.colors[old_index] = primary.unused_color
+        # rowIdx / Log2(N) * log2(M) | N = source topologies and M = # destination topologies
+        proportional_topology = secondary.get_highlighted_logarithmic()
+        projected_topology = 2 ** (proportional_topology * primary.maxdepth)
+        # Nearest search as this might not be an exact match
+        distances = ((primary.topologies - projected_topology) ** 2).sum(axis=1)
+        best_match = np.argmin(distances)
+        primary.colors[best_match] = primary.highlight_color
+        # Actual step may be different from indicated step value
+        diff = best_match - old_index
+        primary.forwards = diff > 0
+
 
 def main(args=None):
     args = parse(args)
-    fig, axes = plt.subplots(1, 2, figsize=(15, 5), width_ratios=(1,2))
 
     # Prepare data to hook into animators
     d1, t1 = minSurfaceSplit3D(args.f1x, args.f1y, args.f1z, args.p1)
@@ -500,10 +538,17 @@ def main(args=None):
                     'highlight_color': args.hc,
                     'callback': args.callback,
                     'i': 0,
+                    'log_labels': args.ll,
                    }
     plot1.register(primary=plot1, **plotDataArgs).concretize()
     plot2.register(primary=plot2, secondary=plot1, **plotDataArgs).concretize()
 
+    # Size and ratios based on guestimate for a clean-ish render
+    levels = [np.log2(np.prod(pd.topologies[0])) for pd in [plot1, plot2]]
+    height = max(levels)
+    width = sum(levels)+1
+    ratio = max(2,np.ceil(height / min(levels)))
+    fig, axes = plt.subplots(1, 2, figsize=(width, height), width_ratios=(1,ratio))
     anim = Player(fig, axes, [plot1, plot2], args.save is not None)
 
     if args.save is None:
