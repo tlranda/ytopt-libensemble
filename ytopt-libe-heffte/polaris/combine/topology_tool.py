@@ -35,7 +35,7 @@ def build():
     plot.add_argument("-dc", "--default-color", dest='dc', default="y", help="Color for default configuration highlights (default: %(default)s)")
     plot.add_argument("-hc", "--highlight-color", dest='hc', default="red", help="Color for transfer configuration highlights (default: %(default)s)")
     plot.add_argument("-uc", "--unused-color", dest='uc', default="black", help="Color for inactive configurations (default: %(default)s)")
-    plot.add_argument("-s", "--save", dest='save', default=None, help="Save animation to file rather than dynamic window")
+    plot.add_argument("-s", "--save", dest='save', default=None, help="Save heatmap'd labels to file rather than dynamic window with animation")
 
     return prs
 
@@ -266,7 +266,8 @@ class Player(FuncAnimation):
         self.wrapper_func = wrapper
         # Initialize plot
         for ax, container in zip(self.axes, self.containers):
-            ax.plot(container.coords[:,0], container.coords[:,1], 'ko', alpha=0)
+            dots = ax.plot(container.coords[:,0], container.coords[:,1], 'ko', alpha=0)
+            container.register(dots=dots)
             container.register(texts=[])
             for i in range(len(container.labels)):
                 t = ax.text(container.coords[i,0], container.coords[i,1],
@@ -306,6 +307,12 @@ class Player(FuncAnimation):
                 for artist in container.texts:
                     ax.add_artist(artist)
                     editedArtists.append(artist)
+                for dot in container.dots:
+                    if matplotlib.colors.to_hex(dot.get_color()) == matplotlib.colors.to_hex('black'):
+                        dot.set(color='white')
+                    else:
+                        dot.set(color='black')
+                    editedArtists.append(dot)
         for container in self.containers:
             for t, c in zip(container.texts, container.colors):
                 if t.get_color() != c:
@@ -327,15 +334,81 @@ class Player(FuncAnimation):
         # Ensure the user can see the default befor a frame washes it away
         self.stop()
 
-# Toolbar to control multiple plots
-class AnimationController:
-    def __init__(self, position, anim):
-        self.position = position
+class DeSpineAxes:
+    def __init__(self, anim, args):
         self.anim = anim
         self.fig = self.anim.fig
+        self.despine_axes(args)
+
+    def despine_axes(self, args):
+        # De-spine the axes
+        for ax in self.anim.axes:
+            ax.spines['right'].set_visible(False)
+            ax.spines['left'].set_visible(False)
+            ax.spines['top'].set_visible(False)
+            ax.spines['bottom'].set_visible(False)
+            ax.tick_params(axis='both', which='both',
+                           bottom=False, top=False, left=False, right=False,
+                           labelbottom=False, labeltop=False, labelleft=False, labelright=False)
+        # Axes titles are set underneath as that real-estate is always free in current design
+        for i, ax in enumerate(self.anim.axes):
+            procs = getattr(args, f"p{i+1}")
+            x,y,z = (getattr(args, f"f{i+1}{c}") for c in ['x','y','z'])
+            ax.set_xlabel(f"FFT {x}x{y}x{z} with {procs} Procs")
+
+class ApplyHeatmap(DeSpineAxes):
+    def __init__(self, anim, args):
+        super().__init__(anim, args)
+        self.applyHeatmap()
+        self.fig.savefig(args.save)
+
+    def applyHeatmap(self):
+        # 2D array of [#containers, #points]
+        # Not all containers have the same #points, however, so use the maximum
+        n_containers = len(self.anim.containers)
+        n_points = [len(self.anim.containers[_].colors) for _ in range(n_containers)]
+        min_points, max_points = min(n_points), max(n_points)
+        update_idxs = -1 * np.ones((n_containers, max_points))
+        # Setup for animation
+        for idx, container in enumerate(self.anim.containers):
+            container.i = 0
+            container.callback(container)
+        # One callback per MINIMUM number of points (no cycles)
+        for it in range(min_points):
+            for idx, container in enumerate(self.anim.containers):
+                edited = np.where(container.colors != container.UNUSED)[0][0]
+                if update_idxs[idx,edited] > 0:
+                    raise ValueError("Double-edit of container {idx}'s {edited} cell in frame {it}")
+                update_idxs[idx,edited] = it
+                # Update container
+                container.i = it+1
+                container.callback(container)
+        # Set colors
+        colormap = matplotlib.colormaps.get_cmap('Reds')
+        for idx0, container in enumerate(self.anim.containers):
+            for idx1, text in enumerate(container.texts):
+                cval = update_idxs[idx0,idx1]
+                if cval < 0:
+                    #text.set(backgroundcolor=(0.5,0.5,0.5,0.5))
+                    text.set(bbox={'facecolor': (0.5,0.5,0.5,0.5), 'edgecolor': 'black'})
+                    text.set_text(text._text+"\n--N/A--")
+                else:
+                    fg = colormap(cval / min_points)
+                    bg = (0,0,0,1) if sum(fg) > 3 else (1,1,1,1)
+                    text.set(color=fg, backgroundcolor=bg)
+                    text.set(bbox={'facecolor': bg, 'edgecolor': 'black'})
+                    text.set_text(text._text+"\n"+f"({int(cval)})")
+
+# Toolbar to control multiple plots
+class AnimationController(DeSpineAxes):
+    def __init__(self, position, anim, args):
+        self.position = position
+        super().__init__(anim, args)
         self.setup()
+        plt.show()
 
     def setup(self):
+        """ Buttons """
         # One back
         onebackax = self.fig.add_axes([self.position[0], self.position[1], 0.1, 0.05])
         self.button_oneback = matplotlib.widgets.Button(onebackax, label=u'$\u29CF$')
@@ -360,15 +433,6 @@ class AnimationController:
         oneforax = self.fig.add_axes([self.position[0]+0.55, self.position[1],0.1,0.05])
         self.button_oneforward = matplotlib.widgets.Button(oneforax, label=u'$\u29D0$')
         self.button_oneforward.on_clicked(self.anim.oneforward)
-        # De-spine the axes
-        for ax in self.anim.axes:
-            ax.spines['right'].set_visible(False)
-            ax.spines['left'].set_visible(False)
-            ax.spines['top'].set_visible(False)
-            ax.spines['bottom'].set_visible(False)
-            ax.tick_params(axis='both', which='both',
-                           bottom=False, top=False, left=False, right=False,
-                           labelbottom=False, labeltop=False, labelleft=False, labelright=False)
 
 # Minimum surface splitting solve is used as the default topology for FFT (picked by heFFTe when in-grid and/or out-grid topology == ' ')
 def surface(fft_dims, grid):
@@ -445,10 +509,10 @@ def main(args=None):
     if args.save is None:
         # Create the toolbar that controls animation
         pos=(0.2, 0.92)
-        toolbar = AnimationController(pos, anim)
-        plt.show()
+        toolbar = AnimationController(pos, anim, args)
     else:
-        anim.save(args.save)
+        # Create static heatmap information
+        ApplyHeatmap(anim, args)
 
 
 if __name__ == '__main__':
