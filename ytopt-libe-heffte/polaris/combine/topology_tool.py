@@ -378,19 +378,22 @@ class ApplyHeatmap(DeSpineAxes):
         # Not all containers have the same #points, however, so use the maximum
         n_containers = len(self.anim.containers)
         n_points = [len(self.anim.containers[_].colors) for _ in range(n_containers)]
+        left_points = n_points[0] # Traversed cycle length
         min_points, max_points = min(n_points), max(n_points)
-        update_idxs = -1 * np.ones((n_containers, max_points))
+        # Max repetitions is cycle length ratio
+        max_repetitions = int(np.ceil(max_points / min_points))+1
+        update_idxs = -1 * np.ones((n_containers, max_points, max_repetitions))
         # Setup for animation
         for idx, container in enumerate(self.anim.containers):
             container.i = 0
             container.callback(container)
-        # One callback per MINIMUM number of points (no cycles)
-        for it in range(min_points):
+        # One callback per point in left side of figure
+        for it in range(left_points):
             for idx, container in enumerate(self.anim.containers):
                 edited = np.where(container.colors != container.UNUSED)[0][0]
-                if update_idxs[idx,edited] > 0:
-                    raise ValueError("Double-edit of container {idx}'s {edited} cell in frame {it}")
-                update_idxs[idx,edited] = it
+                # Fetch newest index in this cycle's buffer to log visit at (may visit multiple times)
+                mindx = np.where(update_idxs[idx,edited] < 0)[0][0]
+                update_idxs[idx,edited,mindx] = it
                 # Update container
                 container.i = it+1
                 container.callback(container)
@@ -398,17 +401,26 @@ class ApplyHeatmap(DeSpineAxes):
         colormap = matplotlib.colormaps.get_cmap('Reds')
         for idx0, container in enumerate(self.anim.containers):
             for idx1, text in enumerate(container.texts):
-                cval = update_idxs[idx0,idx1]
-                if cval < 0:
-                    #text.set(backgroundcolor=(0.5,0.5,0.5,0.5))
-                    text.set(bbox={'facecolor': (0.5,0.5,0.5,0.5), 'edgecolor': 'black'})
-                    text.set_text(text._text+"\n--N/A--")
-                else:
-                    fg = colormap(cval / min_points)
-                    bg = (0,0,0,1) if sum(fg) > 3 else (1,1,1,1)
-                    text.set(color=fg, backgroundcolor=bg)
-                    text.set(bbox={'facecolor': bg, 'edgecolor': 'black'})
-                    text.set_text(text._text+"\n"+f"({int(cval)})")
+                for idx2, cval in enumerate(update_idxs[idx0,idx1,:]):
+                    if cval < 0:
+                        # This topology was never visited
+                        if idx2 == 0:
+                            text.set(bbox={'facecolor': (0.5,0.5,0.5,0.5), 'edgecolor': 'black'})
+                            text.set_text(text._text+"\n--N/A--")
+                        # No more visits for this topology
+                        break
+                    else:
+                        if idx2 == 0:
+                            fg = colormap(cval / left_points)
+                            bg = (0,0,0,1) if sum(fg) > 3 else (1,1,1,1)
+                            text.set(color=fg, backgroundcolor=bg)
+                            text.set(bbox={'facecolor': bg, 'edgecolor': 'black'})
+                        if "\n" in text._text:
+                            original_label, prior_visits = text._text.split('\n')
+                            prior_visits = [v for v in prior_visits.split(' ')]+[str(int(cval))]
+                            text.set_text(original_label+"\n"+" ".join(prior_visits))
+                        else:
+                            text.set_text(text._text+"\n"+f"{int(cval)}")
 
 # Toolbar to control multiple plots
 class AnimationController(DeSpineAxes):
