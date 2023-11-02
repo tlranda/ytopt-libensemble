@@ -188,11 +188,8 @@ if len(sequence) >= 2:
         intermediates.append(rawpow+prevpow)
         prevpow = rawpow
     sequence = sorted(intermediates + sequence)
-# Ensure max_depth is always in the list
-if np.log2(max_depth)-int(np.log2(max_depth)) > 0:
-    sequence = sorted(sequence+[max_depth])
 if max_depth not in sequence:
-    sequence = sorted(sequence+[max_depth])
+    sequence += [max_depth]
 print(f"Depths are based on {threads_per_node} threads on each node, shared across {ranks_per_node} MPI ranks on each node")
 print(f"Selectable depths are: {sequence}"+"\n")
 
@@ -344,11 +341,58 @@ if warned:
 print(f"GC will be fitted against data from: {data_files}")
 data = pd.concat([pd.read_csv(_) for _ in data_files])
 # Load relevant training data
+trim_cols = ['c0','p0','p1x','p1y','p1z']
+trim_cols += [f'p{_}' for _ in range(2,10)]
+trim_cols += ['mpi_ranks', 'threads_per_node', 'ranks_per_node', 'FLOPS']
+trim_cols += [f'p{_}_float' for _ in range(7,10)]
+data_trimmed = data.loc[:, trim_cols]
+# Recontextualize rank-specific loaded data
+splitter = lambda x: [int(_) for _ in x.split(' ')]
+np_topologies = np.asarray([np.fromstring(_, dtype=int, sep=' ') for _ in topologies])
+for topology_key in ['p7','p8']:
+    # Grab the strings, convert to 3D integer topologies, then represent their logarithm
+    top_as_np_log = np.log2(np.vstack(data_trimmed[topology_key].apply(splitter)))
+    # Get corresponding MAXIMUM logarithm for each dimension/row
+    log_mpi_ranks = np.stack([np.log2(data_trimmed['mpi_ranks'])]*3, axis=1)
+    # Change proportion of logarithm into new base and project into this topology
+    projection = 2 ** (top_as_np_log / log_mpi_ranks * np.log2(MPI_RANKS))
+    # Do a nearest-topology search to identify the best real match for the topology
+    distances = np.asarray([((np_topologies - p) ** 2).sum(axis=1) for p in projection])
+    best_match = np.argmin(distances, axis=1)
+    new_topo = np_topologies[best_match]
+    debug_choices = set([tuple(_.tolist()) for _ in new_topo])
+    # Back to string
+    str_topo = [" ".join([str(_) for _ in topo]) for topo in new_topo]
+    data_trimmed[topology_key] = str_topo
+
 import pdb
 pdb.set_trace()
-
-data_trimmed = data.loc[:, ['c0','p0','p1x','p1y','p1z']+[f'p{_}' for _ in range(2,10)]+['mpi_ranks', 'FLOPS']+[f'p{_}_float' for _ in range(7,10)]]
-# Recontextualize rank-specific loaded data
+# Recontextualize sequence data
+for sequence_key in ['p9']:
+    # Must group by values
+    dest_seq = np.asarray(sequence)
+    for ((t,r), subframe) in data_trimmed.groupby(['threads_per_node','ranks_per_node']):
+        max_select = t // r
+        cur_vals = subframe[sequence_key]
+        # Reconstruct available sequence
+        cur_seq = [2**_ for _ in range(1,10) if (2**_) <= max_select]
+        if len(cur_seq) >= 2:
+            intermediates = []
+            prevpow = cur_seq[1]
+            for rawpow in cur_seq[2:]:
+                if rawpow+prevpow >= max_select:
+                    break
+                intermediates.append(rawpow+prevpow)
+                prevpow = rawpow
+            cur_seq = sorted(intermediates + cur_seq)
+        if max_select not in cur_seq:
+            cur_seq += [max_select]
+        cur_seq = np.asarray(cur_seq)
+        # Project values into ratios
+        projection = np.asarray([np.argmax((cur_seq == c)) for c in cur_vals]) / len(cur_seq) * len(dest_seq)
+        projection = dest_seq[projection.round(0).astype(int)]
+        data_trimmed.loc[sequence_key, subframe.index] = projection
+        pass
 pass
 data_trimmed.drop(columns=[f'p{_}_float' for _ in range(7,10)],inplace=True)
 # Drop configurations that had errors (not runtime failures); indicated by FLOPS >= 2.0

@@ -171,10 +171,8 @@ if len(sequence) >= 2:
         prevpow = rawpow
     sequence = sorted(intermediates + sequence)
 # Ensure max_depth is always in the list
-if np.log2(max_depth)-int(np.log2(max_depth)) > 0:
-    sequence = sorted(sequence+[max_depth])
 if max_depth not in sequence:
-    sequence = sorted(sequence+[max_depth])
+    sequence += [max_depth]
 print(f"Depths are based on {threads_per_node} threads on each node, shared across {ranks_per_node} MPI ranks on each node")
 print(f"Selectable depths are: {sequence}"+"\n")
 
