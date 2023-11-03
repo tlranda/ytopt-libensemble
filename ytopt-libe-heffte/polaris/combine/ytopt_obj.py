@@ -110,7 +110,7 @@ def myobj(point: dict, params: list, workerID: int) -> float:
         plopper_template = "./speed3d.sh"
         if max(xyz) >= 1024:
             # Prevent indexing overflow errors
-            point['p0'] += "-long"
+            point['p0'] = str(point['p0'])+"-long"
             # Disable GPU aware MPI so we can run successfully
             # No need to check if on cpu--this argument shouldn't have an affect in that case
             plopper_template = "./speed3d_no_gpu_aware.sh"
@@ -135,6 +135,6 @@ def myobj(point: dict, params: list, workerID: int) -> float:
         return results
     except Exception as e:
         bonus_context = f"point: {point} | params: {params} | workerID: {workerID} | "
-        e.args = tuple([bonus_context+e.args[0]])
+        e.args = tuple([bonus_context+str(e.args[0])])
         raise e
 
