@@ -267,91 +267,27 @@ class heffte_plopper(LibE_Plopper):
             sequence = sorted(sequence+[self.max_depth])
         self.sequence = sequence
 
-    def topology_interpret(self, config: dict) -> dict:
-        machine_info = config['machine_info']
-        if config['P1'] in self.known_timeouts.keys():
-            config['machine_info']['app_timeout'] = self.known_timeouts[config['P1']]
-            machine_info['app_timeout'] = self.known_timeouts[config['P1']]
-        budget = machine_info['mpi_ranks']
-        topology = self.topology_cache[budget]
-        # Replace each key with uniform bucketized value
-        for topology_key in self.topology_keymap.keys():
-            selection = min(int(float(config[topology_key]) * len(topology)), len(topology)-1)
-            selected_topology = topology[selection]
-            if type(selected_topology) is not str:
-                selected_topology = f"{self.topology_keymap[topology_key]} {' '.join([str(_) for _ in selected_topology])}"
-            config[topology_key] = selected_topology
-        # Replace sequence value
-        config['P9'] = machine_info['sequence'][int(len(machine_info['sequence']) * float(config['P9']))]
-        # Fix numpy zero-dimensional
-        for k,v in config.items():
-            if k not in self.topology_keymap.keys() and type(v) is np.ndarray and v.shape == ():
-                config[k] = v.tolist()
-        return config
-
-    def floatcast(self, DataFrame, machine_info, real_topology=False):
-        # Return a copy, leave original frame alone
-        copied = DataFrame.copy()
-
-        sequence = np.asarray(machine_info['sequence'])
-
-        if real_topology:
-            seq_len = 3*(len(str(max(DataFrame['mpi_ranks'])))+1)
-            altered_topologies = np.empty((len(DataFrame), len(self.topology_keymap.keys())), dtype=f"<U{seq_len}")
-        else:
-            altered_topologies = np.empty((len(DataFrame), len(self.topology_keymap.keys())), dtype=int)
-        altered_sequence = np.empty((len(DataFrame), 1), dtype=int)
-
-        # Figure out whether P9 is upper/lower case
-        p9_key = 'p9' if 'p9' in DataFrame.columns else 'P9'
-        assert p9_key in DataFrame.columns
-        # Topology keymap is always in upper case, so may have to temp-cast it
-        if p9_key.lower() == p9_key:
-            topkeys = [k.lower() for k in self.topology_keymap.keys()]
-        else:
-            topkeys = list(self.topology_keymap.keys())
-
-        # Groupby budgets for more efficient processing
-        for (gidx, group) in DataFrame.groupby('mpi_ranks'):
-            budget = group.loc[group.index[0], 'mpi_ranks']
-            # Topology
-            topology = self.topology_cache[budget]
-            # Topology must be differentiably cast, but doesn't need to be representative per se
-            if real_topology:
-                topology = np.asarray([" ".join([str(v) for v in t]) for t in topology[:-1]]+[topology[-1]])
-            else:
-                topology = np.arange(len(topology))
-            for tidx, topology_key in enumerate(topkeys):
-                # Initial selection followed by boundary fixing, then substitute from array
-                # Gaussian Copula CAN over/undersample, so you have to fix that too
-                selection = (group[topology_key] * len(topology)).astype(int)
-                selection = selection.apply(lambda s: max(min(s, len(topology)-1), 0))
-                selection = topology[selection]
-                altered_topologies[group.index, tidx] = selection
-            # Sequence
-            selection = (group[p9_key] * len(sequence)).astype(int)
-            selection = selection.apply(lambda s: max(min(s, len(sequence)-1), 0))
-            altered_sequence[group.index] = sequence[selection].reshape(len(selection),1)
-        # Substitute values and return
-        for key, replacement in zip(topkeys+[p9_key],
-                                    np.hsplit(altered_topologies, altered_topologies.shape[1])+[altered_sequence]):
-            copied[key] = replacement
-        return copied
-
     def createDict(self, x, params, *args, **kwargs):
         dictVal = {}
         for p, v in zip(params, x):
             if type(v) is np.ndarray and v.shape == ():
                 v = v.tolist()
+            # Insert -ingrid/-outgrid flags
+            if p == 'P7':
+                v = '-ingrid '+v
+            elif p == 'P8':
+                v = '-outgrid '+v
             dictVal[p] = v
         # Machine info should be available via kwargs['extrakeys']['machine_info']
         dictVal.setdefault('machine_info', kwargs['extrakeys']['machine_info'])
-        dictVal = self.topology_interpret(dictVal)
+        machine_info = dictVal['machine_info']
+        xyz = (int(dictVal['P1X']), int(dictVal['P1Y']), int(dictVal['P1Z']))
+        if xyz in self.known_timeouts.keys():
+            dictVal['machine_info']['app_timeout'] = self.known_timeouts[xyz]
+            machine_info['app_timeout'] = self.known_timeouts[xyz]
         return dictVal
 
 
-import pdb
-#pdb.set_trace()
 __getattr__ = libe_problem_builder(lookup_ival, inv_lookup_ival, input_space, HERE, name='heFFTe_Problem',
                                     customize_space=customize_space, plopper_class=heffte_plopper)
 

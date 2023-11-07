@@ -140,6 +140,7 @@ p6 = CSH.CategoricalHyperparameter(name='p6', choices=["-r2c_dir 0", "-r2c_dir 1
 
 # Cross-architecture is out-of-scope for now so we determine this for the current platform and leave it at that
 cpu_override = None
+gpu_override = None
 gpu_enabled = False
 cpu_ranks_per_node = 1
 
@@ -162,11 +163,15 @@ else:
 if cpu_ranks_per_node is None:
     cpu_ranks_per_node = threads_per_node
 if gpu_enabled:
-    proc = subprocess.run('nvidia-smi -L'.split(' '), capture_output=True)
-    if proc.returncode != 0:
-        raise ValueError("No GPUs Detected, but in GPU mode")
-    gpus = len(proc.stdout.decode('utf-8').strip().split('\n'))
-    print(f"Detected {gpus} GPUs on this machine")
+    if gpu_override is None:
+        proc = subprocess.run('nvidia-smi -L'.split(' '), capture_output=True)
+        if proc.returncode != 0:
+            raise ValueError("No GPUs Detected, but in GPU mode")
+        gpus = len(proc.stdout.decode('utf-8').strip().split('\n'))
+        print(f"Detected {gpus} GPUs on this machine")
+    else:
+        gpus = gpu_override
+        print(f"Override indicates {gpu_override} GPUs on this machine")
     ranks_per_node = gpus
 else:
     ranks_per_node = cpu_ranks_per_node
@@ -256,7 +261,7 @@ conditions = [Condition({'mpi_ranks': user_args['constraint-sys'],
                         num_rows=100)]
 constraints = [{'constraint_class': 'ScalarRange', # App scale X limit
                     'constraint_parameters': {
-                        'column_name': 'p1',
+                        'column_name': 'p1x',
                         'low_value': 64,
                         'high_value': 2048,
                         'strict_boundaries': False,},
@@ -300,7 +305,6 @@ problem.set_space(cs)
 
 # Fetch the floatcasting function for GC fitting
 topology_cache = problem.plopper.topology_cache
-floatcast_fn = problem.plopper.floatcast
 uncasted_space_size = problem.input_space_size
 # Arguments to control autobudgeting
 ideal_proportion = user_args['ideal-proportion'] if 'ideal-proportion' in user_args else 0.1
@@ -339,7 +343,7 @@ if warned:
     print("\n\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n")
     print("Will continue on best-effort basis with remaining files")
 print(f"GC will be fitted against data from: {data_files}")
-data = pd.concat([pd.read_csv(_) for _ in data_files])
+data = pd.concat([pd.read_csv(_) for _ in data_files]).reset_index(names=["CSV_Order"])
 # Load relevant training data
 trim_cols = ['c0','p0','p1x','p1y','p1z']
 trim_cols += [f'p{_}' for _ in range(2,10)]
@@ -365,8 +369,6 @@ for topology_key in ['p7','p8']:
     str_topo = [" ".join([str(_) for _ in topo]) for topo in new_topo]
     data_trimmed[topology_key] = str_topo
 
-import pdb
-pdb.set_trace()
 # Recontextualize sequence data
 for sequence_key in ['p9']:
     # Must group by values
@@ -391,9 +393,7 @@ for sequence_key in ['p9']:
         # Project values into ratios
         projection = np.asarray([np.argmax((cur_seq == c)) for c in cur_vals]) / len(cur_seq) * len(dest_seq)
         projection = dest_seq[projection.round(0).astype(int)]
-        data_trimmed.loc[sequence_key, subframe.index] = projection
-        pass
-pass
+        data_trimmed.loc[subframe.index, sequence_key] = projection
 data_trimmed.drop(columns=[f'p{_}_float' for _ in range(7,10)],inplace=True)
 # Drop configurations that had errors (not runtime failures); indicated by FLOPS >= 2.0
 data_trimmed = data_trimmed[data_trimmed['FLOPS'] < 2.0]
@@ -427,11 +427,9 @@ while True:
         suggested_budget = user_args['max-evals']
         break
     mass_sample = model.sample_from_conditions(mass_condition)
-    # Downcast floats to interpolated values
-    space_sample = floatcast_fn(mass_sample, MACHINE_INFO)
     # Original Population and available population for sampling
     pop = possible_configurations
-    subpop = len(space_sample.drop_duplicates())
+    subpop = len(mass_sample.drop_duplicates())
     # Ideal Population and expected surviving ideal proportion after sampling
     ideal = int(pop * ideal_proportion)
     subideal = max(1, ideal - int((pop - subpop) * ideal_attrition))
@@ -477,13 +475,12 @@ if 'determine-budget-only' in user_args and user_args['determine-budget-only']:
 
 def remove_generated_duplicates(samples, history, dtypes):
     default_machine_info = {'sequence': sequence}
-    casted = problem.plopper.floatcast(samples, default_machine_info)
     # Duplicate checking and selection
-    casted.insert(0, 'source', ['cast'] * len(casted))
+    samples.insert(0, 'source', ['sample'] * len(samples))
     if len(history) > 0:
-        combined = pd.concat((history, casted)).reset_index(drop=False)
+        combined = pd.concat((history, samples)).reset_index(drop=False)
     else:
-        combined = casted.reset_index(drop=False)
+        combined = samples.reset_index(drop=False)
     match_on = list(set(combined.columns).difference(set(['source'])))
     duplicated = np.where(combined.duplicated(subset=match_on))[0]
     sample_idx = combined.loc[duplicated]['index']

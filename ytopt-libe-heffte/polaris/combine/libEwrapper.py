@@ -75,6 +75,8 @@ def build():
                         help="Override #ranks per node on CPUs (default: #threads on cpu or --cpu-override when specified)")
     scaling.add_argument("--gpu-enabled", action="store_true",
                         help="Enable GPU treatment for libensemble (default: Disabled)")
+    scaling.add_argument("--gpu-override", type=int, default=None,
+                        help="Override automatic GPU detection to set max_gpu value (default: Detect when --gpu-enabled)")
     # GaussianCopula
     gc = parser.add_argument_group("GaussianCopula", "Arguments for Gaussian Copula (must use --libensemble-target=run_gctla.py)")
     gc.add_argument("--gc-sys", type=int, default=None,
@@ -242,6 +244,7 @@ def parse(prs=None, args=None):
         ('application_z',): [(args.ens_template_export, "s/APP_SCALE_Z = [0-9A-Z_]*/APP_SCALE_Z = {}/"),],
         ('cpu_override',): [(args.ens_template_export, "s/cpu_override = .*/cpu_override = {}/"),],
         ('cpu_ranks_per_node',): [(args.ens_template_export, "s/cpu_ranks_per_node = .*/cpu_ranks_per_node = {}/"),],
+        ('gpu_override',): [(args.ens_template_export, "s/gpu_override = .*/gpu_override = {}/"),],
         ('gpu_enabled',): [(args.ens_template_export, "s/gpu_enabled = .*/gpu_enabled = {}/"),],
     }
     return args
