@@ -391,7 +391,6 @@ for sequence_key in ['p9']:
         projection = np.asarray([np.argmax((cur_seq == c)) for c in cur_vals]) / len(cur_seq) * len(dest_seq)
         projection = dest_seq[projection.round(0).astype(int)]
         data_trimmed.loc[subframe.index, sequence_key] = projection
-data_trimmed.drop(columns=[f'p{_}_float' for _ in range(7,10)],inplace=True)
 # Drop configurations that had errors (not runtime failures); indicated by FLOPS >= 2.0
 data_trimmed = data_trimmed[data_trimmed['FLOPS'] < 2.0]
 metadata = SingleTableMetadata()
