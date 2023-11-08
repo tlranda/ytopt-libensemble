@@ -305,9 +305,6 @@ sim_specs = {
             ('threads_per_node', int, (1,)),
             ('ranks_per_node', int, (1,)),
             ('gpu_enabled', bool, (1,)),
-            ('p7_float', float, (1,)),
-            ('p8_float', float, (1,)),
-            ('p9_float', float, (1,)),
             ('libE_id', int, (1,)),
             ('libE_workers', int, (1,)),],
     'user': {
@@ -339,7 +336,6 @@ gen_specs = {
                  ['machine_identifier'] +\
                  ['mpi_ranks', 'threads_per_node', 'ranks_per_node'] +\
                  ['gpu_enabled'] +\
-                 ['p7_float','p8_float','p9_float'] +\
                  ['libE_id', 'libE_workers'],
     'user': {
         'machine_info': MACHINE_INFO,

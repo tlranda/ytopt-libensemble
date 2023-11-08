@@ -346,7 +346,6 @@ data = pd.concat([pd.read_csv(_) for _ in data_files]).reset_index(names=["CSV_O
 trim_cols = ['c0','p0','p1x','p1y','p1z']
 trim_cols += [f'p{_}' for _ in range(2,10)]
 trim_cols += ['mpi_ranks', 'threads_per_node', 'ranks_per_node', 'FLOPS']
-trim_cols += [f'p{_}_float' for _ in range(7,10)]
 data_trimmed = data.loc[:, trim_cols]
 # Recontextualize rank-specific loaded data
 splitter = lambda x: [int(_) for _ in x.split(' ')]
@@ -500,7 +499,6 @@ problems = dict()
 for simulatorID in range(2, 2+num_sim_workers):
     dir_adjusted_problem = deepcopy(problem)
     dir_adjusted_problem.plopper.outputdir = "tmp_files"
-    print(dir_adjusted_problem.plopper.outputdir)
     problems[simulatorID] = dir_adjusted_problem
 
 # Declare the sim_f to be optimized, and the input/outputs
@@ -514,9 +512,6 @@ sim_specs = {
             ('threads_per_node', int, (1,)),
             ('ranks_per_node', int, (1,)),
             ('gpu_enabled', bool, (1,)),
-            ('p7_float', float, (1,)),
-            ('p8_float', float, (1,)),
-            ('p9_float', float, (1,)),
             ('libE_id', int, (1,)),
             ('libE_workers', int, (1,)),],
     'user': {
@@ -549,7 +544,6 @@ gen_specs = {
                  ['machine_identifier'] +\
                  ['mpi_ranks', 'threads_per_node', 'ranks_per_node'] +\
                  ['gpu_enabled'] +\
-                 ['p7_float', 'p8_float', 'p9_float'] +\
                  ['libE_id', 'libE_workers'],
     'user': {
         'machine_info': MACHINE_INFO,
