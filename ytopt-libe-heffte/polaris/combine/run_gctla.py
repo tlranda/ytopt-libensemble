@@ -317,11 +317,9 @@ quantile_reduction = user_args['quantile-reduction'] if 'quantile-reduction' in 
 assert 0 < quantile_reduction <= 1, "Quantile reduction must be > 0 and <= 1"
 min_quantile = user_args['min-quantile'] if 'min-quantile' in user_args else 0.15
 assert min_quantile >= 0, "Minimum quantile must be >= 0"
-# Determine qualified space size
-possible_configurations = uncasted_space_size * len(sequence) * (len(topology_cache[user_args['constraint-sys']]) ** 2)
 # Ensure budgeting saturation
 mass_condition = deepcopy(conditions)
-mass_condition[0].num_rows = possible_configurations
+mass_condition[0].num_rows = uncasted_space_size
 # Load data
 if 'ignore' not in user_args.keys() or user_args['ignore'] is None or len(user_args['ignore']) == 0:
     user_args['ignore'] = []
@@ -428,7 +426,7 @@ while True:
         break
     mass_sample = model.sample_from_conditions(mass_condition)
     # Original Population and available population for sampling
-    pop = possible_configurations
+    pop = uncasted_space_size
     subpop = len(mass_sample.drop_duplicates())
     # Ideal Population and expected surviving ideal proportion after sampling
     ideal = int(pop * ideal_proportion)
@@ -469,7 +467,6 @@ else:
 user_args['max-evals'] = min(suggested_budget, user_args['max-evals'])
 if accepted_model is not None:
     model = accepted_model
-
 if 'determine-budget-only' in user_args and user_args['determine-budget-only']:
     exit()
 
