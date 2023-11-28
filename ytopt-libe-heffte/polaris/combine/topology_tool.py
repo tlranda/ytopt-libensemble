@@ -371,7 +371,7 @@ class ApplyHeatmap(DeSpineAxes):
     def __init__(self, anim, args):
         super().__init__(anim, args)
         self.applyHeatmap()
-        self.fig.savefig(args.save)
+        self.fig.savefig(args.save, dpi=700)
 
     def applyHeatmap(self):
         # 2D array of [#containers, #points]
