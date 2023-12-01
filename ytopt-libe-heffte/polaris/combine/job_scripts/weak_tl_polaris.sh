@@ -28,11 +28,23 @@ for rank_index in ${!app3d_scales[@]}; do
     #done;
     str_app=${app3d_scales[$rank_index]};
     str_nodes=${n_nodes[$rank_index]};
-    while [[ ${#str_nodes} -lt 2 ]]; do
+    while [[ ${#str_nodes} -lt 3 ]]; do
         str_nodes="0${str_nodes}";
     done;
     weak_dataset+=( "${dataset_basis}${str_nodes}n_${str_app}a/manager_results.csv" );
 done;
+
+dataset_exists=1;
+for w in ${weak_dataset[@]}; do
+    if [[ ! -f "${w}" ]]; then
+        dataset_exists=0;
+        echo "MISSING DATASET FILE: ${w}";
+    fi
+done;
+if [[ ${dataset_exists} -ne 1 ]]; then
+    echo "ABORT";
+    exit;
+fi
 
 for rank_idx in ${!weak_dataset[@]}; do
     left_out=${weak_dataset[$rank_idx]};
