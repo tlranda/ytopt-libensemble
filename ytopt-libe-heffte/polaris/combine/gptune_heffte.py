@@ -24,13 +24,21 @@ def build():
     prs = argparse.ArgumentParser()
     prs.add_argument("--inputs", type=str, nargs="+", required=True, help="Input files to learn from")
     prs.add_argument("--sys", type=int, required=True, help="System scale to target (mpi_ranks)")
-    prs.add_argument("--app", type=int, required=True, help="Application scale to target (fft size)")
+    prs.add_argument("--app", type=int, default=64, help="Default application dimension to target (fft size), default: %(default)s")
+    prs.add_argument("--app-x", type=int, default=None, help="FFT-size in X dimension (default to --app value)")
+    prs.add_argument("--app-y", type=int, default=None, help="FFT-size in Y dimension (default to --app value)")
+    prs.add_argument("--app-z", type=int, default=None, help="FFT-size in Z dimension (default to --app value)")
     prs.add_argument("--log", required=True, help="File to log results to as CSV")
     prs.add_argument("--max-evals", type=int, default=30, help="Number of evaluations per task (default: %(default)s)")
     prs.add_argument("--n-init", type=int, default=-1, help="Number of initial evaluations (blind) (default: Use half of <max-evals>)")
     prs.add_argument("--seed", type=int, default=1234, help="RNG seed (default: %(default)s)")
     prs.add_argument("--preserve-history", action="store_true", help="Prevent existing gptune history files from reuse/clobbering when specified")
     prs.add_argument("--dry", action="store_true", help="Do not run actual TL loop, but do all things prior to it")
+    prs.add_argument("--system", choices=["theta", "polaris"], default="polaris", help="Call formatting for which cluster (default: %(default)s)")
+    prs.add_argument("--cpu-override", type=int, default=None, help="Number of CPU cores on the system (default: detected at runtime)")
+    prs.add_argument("--gpu-override", type=int, default=None, help="Number of GPUs on the system (default: detected at runtime)")
+    prs.add_arguemnt("--gpu-enabled", action="store_true", help="Unless this flag is given, GPUs will not be used")
+    prs.add_argument("--cpu-ranks-per-node", type=int, default=None, help="Number of CPU ranks to give each node (default: value of cpu-cores on system AKA cpu-override)")
     return prs
 
 def parse(args=None, prs=None):
@@ -38,6 +46,10 @@ def parse(args=None, prs=None):
         prs = build()
     if args is None:
         args = prs.parse_args()
+    # Set undefined FFT size parameters to the default value
+    for argname in [f'app_{d}' for d in 'xyz']:
+        if getattr(args, argname) is None:
+            setattr(args, argname, args.app)
     return args
 
 def csvs_to_gptune(fnames, tuning_metadata):
@@ -144,18 +156,25 @@ def main(args=None, prs=None):
 
     MPI_RANKS = args.sys
     args.nodes = MPI_RANKS // 64
-    APP_SCALE = args.app
-    #SYSTEM = "Polaris"
-    #template_string = "mpiexec -n {mpi_ranks} --ppn {ranks_per_node} --depth {depth} --cpu-bind depth --env OMP_NUM_THREADS={depth} sh ./set_affinity_gpu_polaris.sh {interimfile}"
-    SYSTEM = "Theta"
-    template_string = "aprun -n {mpi_ranks} -N {ranks_per_node} -cc depth -d {depth} -j {j} -e OMP_NUM_THREADS={depth} sh {interimfile}"
+    APP_SCALE_X = args.app_x
+    APP_SCALE_Y = args.app_y
+    APP_SCALE_Z = args.app_z
+    SYSTEM = args.system
+    if SYSTEM == "polaris":
+        template_string = "mpiexec -n {mpi_ranks} --ppn {ranks_per_node} --depth {depth} --cpu-bind depth --env OMP_NUM_THREADS={depth} sh ./set_affinity_gpu_polaris.sh {interimfile}"
+    elif SYSTEM == "theta":
+        template_string = "aprun -n {mpi_ranks} -N {ranks_per_node} -cc depth -d {depth} -j {j} -e OMP_NUM_THREADS={depth} sh {interimfile}"
+    else:
+        raise ValueError(f"System {SYSTEM} doesn't have a template string for GPTune to execute the application with")
     # Set space and architecture info
     CONFIGSPACE_SEED = 1234
     cs = CS.ConfigurationSpace(seed=CONFIGSPACE_SEED)
     # arg1  precision
     p0 = CSH.CategoricalHyperparameter(name='p0', choices=["double", "float"], default_value="float")
     # arg2  3D array dimension size
-    p1 = CSH.Constant(name='p1', value=args.app)
+    p1x = CSH.Constant(name='p1x', value=APP_SCALE_X)
+    p1y = CSH.Constant(name='p1y', value=APP_SCALE_Y)
+    p1z = CSH.Constant(name='p1z', value=APP_SCALE_Z)
     #p1 = CSH.OrdinalHyperparameter(name='p1', sequence=[64,128,256,512,1024], default_value=128)
     # arg3  reorder
     p2 = CSH.CategoricalHyperparameter(name='p2', choices=["-no-reorder", "-reorder"," "], default_value=" ")
@@ -167,21 +186,13 @@ def main(args=None, prs=None):
     p5 = CSH.CategoricalHyperparameter(name='p5', choices=["-pencils", "-slabs"," "], default_value=" ")
     # arg7
     p6 = CSH.CategoricalHyperparameter(name='p6', choices=["-r2c_dir 0", "-r2c_dir 1","-r2c_dir 2", " "], default_value=" ")
-    # arg8
-    p7 = CSH.UniformFloatHyperparameter(name='p7', lower=0, upper=1)
-    # arg9
-    p8 = CSH.UniformFloatHyperparameter(name='p8', lower=0, upper=1)
-    # number of threads is hardware-dependent
-    p9 = CSH.UniformFloatHyperparameter(name='p9', lower=0, upper=1)
 
     # Cross-architecture is out-of-scope for now so we determine this for the current platform and leave it at that
-    cpu_override = 256
-    gpu_enabled = False
-    cpu_ranks_per_node = 64
+    # This is where overrides would be set in run_gctla, etc, but they're just arguments for GPTune
 
-    c0 = CSH.Constant('c0', value='cufft' if gpu_enabled else 'fftw')
+    c0 = CSH.Constant('c0', value='cufft' if args.gpu_enabled else 'fftw')
 
-    if cpu_override is None:
+    if args.cpu_override is None:
         proc = subprocess.run(['nproc'], capture_output=True)
         if proc.returncode == 0:
             threads_per_node = int(proc.stdout.decode('utf-8').strip())
@@ -193,16 +204,22 @@ def main(args=None, prs=None):
                     break
         print(f"Detected {threads_per_node} CPU threads on this machine")
     else:
-        threads_per_node = cpu_override
+        threads_per_node = args.cpu_override
         print(f"Override indicates {threads_per_node} CPU threads on this machine")
-    if cpu_ranks_per_node is None:
+    if args.cpu_ranks_per_node is None:
         cpu_ranks_per_node = threads_per_node
-    if gpu_enabled:
-        proc = subprocess.run('nvidia-smi -L'.split(' '), capture_output=True)
-        if proc.returncode != 0:
-            raise ValueError("No GPUs Detected, but in GPU mode")
-        gpus = len(proc.stdout.decode('utf-8').strip().split('\n'))
-        print(f"Detected {gpus} GPUs on this machine")
+    else:
+        cpu_ranks_per_node = args.cpu_ranks_per_node
+    if args.gpu_enabled:
+        if args.gpu_override is None:
+            proc = subprocess.run('nvidia-smi -L'.split(' '), capture_output=True)
+            if proc.returncode != 0:
+                raise ValueError("No GPUs Detected, but in GPU mode")
+            gpus = len(proc.stdout.decode('utf-8').strip().split('\n'))
+            print(f"Detected {gpus} GPUs on this machine")
+        else:
+            gpus = args.gpu_override
+            print(f"Override indicates {gpus} GPUs on this machine")
         ranks_per_node = gpus
     else:
         ranks_per_node = cpu_ranks_per_node
@@ -210,7 +227,7 @@ def main(args=None, prs=None):
     print(f"Set ranks_per_node to {ranks_per_node}"+"\n")
 
     NODE_COUNT = max(MPI_RANKS // ranks_per_node,1)
-    print(f"APP_SCALE (AKA Problem Size X, X, X) = {APP_SCALE} x3")
+    print(f"APP_SCALE (AKA Problem Size X, Y, Z) = {APP_SCALE_X}, {APP_SCALE_Y}, {APP_SCALE_Z}")
     print(f"MPI_RANKS (AKA System Size X * Y = Z) = {NODE_COUNT} * {ranks_per_node} = {MPI_RANKS}")
     # Don't exceed #threads across total ranks
     max_depth = threads_per_node // ranks_per_node
@@ -234,12 +251,48 @@ def main(args=None, prs=None):
     # arg10 number threads per MPI process
     #p9 = CSH.OrdinalHyperparameter(name='p9', sequence=sequence, default_value=max_depth)
 
+    # Minimum surface splitting solve is used as the default topology for FFT (picked by heFFTe when in-grid and/or out-grid topology == ' ')
+    def surface(fft_dims, grid):
+        # Volume of FFT assigned to each process
+        box_size = (np.asarray(fft_dims) / np.asarray(grid)).astype(int)
+        # Sum of exchanged surface areas
+        return (box_size * np.roll(box_size, -1)).sum()
+    def minSurfaceSplit(X, Y, Z, procs):
+        fft_dims = (X, Y, Z)
+        best_grid = (1, 1, procs)
+        best_surface = surface(fft_dims, best_grid)
+        best_grid = " ".join([str(_) for _ in best_grid])
+        topologies = []
+        # Consider other topologies that utlize all ranks
+        for i in range(1, procs+1):
+            if procs % i == 0:
+                remainder = int(procs / float(i))
+                for j in range(1, remainder+1):
+                    candidate_grid = (i, j, int(remainder/j))
+                    if np.prod(candidate.grid) != procs:
+                        continue
+                    strtopology = " ".join([str(_) for _ in candidate_grid])
+                    topologies.append(strtopology)
+                    candidate_surface = surface(fft_dims, candidate_grid)
+                    if candidate_surface < best_surface:
+                        best_surface = candidate_surface
+                        best_grid = strtopology
+        # Topologies are reversed such that the topology order is X-1-1 to 1-1-X
+        # This matches the previous version ordering
+        return best_grid, list(reversed(topologies))
+    default_topology, topologies = minSurfaceSplit(APP_SCALE_X, APP_SCALE_Y, APP_SCALE_Z, MPI_RANKS)
+
+    # arg8
+    p7 = CSH.CategoricalHyperparameter(name='p7', choices=topologies, default_value=default_topology)
+    # arg9
+    p8 = CSH.CategoricalHyperparameter(name='p8', choices=topologies, default_value=default_topology)
+    # number of threads is hardware-dependent
+    p9 = CSH.OrdinalHyperparameter(name='p9', sequence=sequence, default_value=max_depth)
     cs.add_hyperparameters([p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, c0])
-    MACHINE_IDENTIFIER = "theta-knl"
+    MACHINE_IDENTIFIER = SYSTEM
 
     # Create a problem instance
-    # Don't look up directly via args.sys, but by # nodes
-    scale_name = gc_tla_problem.lookup_ival[(args.nodes, args.app)]
+    scale_name = gc_tla_problem.lookup_ival(args.nodes, APP_SCALE_X, APP_SCALE_Y, APP_SCALE_Z)
     warnings.simplefilter('ignore')
     problem = getattr(gc_tla_problem, scale_name)
     problem.selflog = args.log
@@ -264,7 +317,7 @@ def main(args=None, prs=None):
     problem.set_space(cs)
     warnings.simplefilter('default')
     # Next build the actual instance for evaluating the target problem
-    print(f"Target problem ({args.sys}, {args.app}) constructed")
+    print(f"Target problem ({args.sys}, {APP_SCALE_X}, {APP_SCALE_Y}, {APP_SCALE_Z}) constructed")
 
     # *S are passed to GPTune objects directly
     # *_space are used to build surrogate models and MOSTLY share kwargs
@@ -283,7 +336,7 @@ def main(args=None, prs=None):
         elif type(param) is CSH.Constant:
             opts['transform'] = 'onehot'
             PS_type = Categoricalnorm
-            if param_name == 'p1':
+            if param_name[:2] == 'p1':
                 # Replace constant with full range of options
                 opts['categories'] = ('64','128','256','512','1024','1400',)
             elif param_name == 'c0':
@@ -333,7 +386,17 @@ def main(args=None, prs=None):
                     'transformer': 'normalize',
                     'lower_bound': int(min([tup[0]*ranks_per_node for tup in problem.dataset_lookup.keys()])),
                     'upper_bound': int(max([tup[0]*ranks_per_node for tup in problem.dataset_lookup.keys()])),},
-                   {'name': 'p1',
+                   {'name': 'p1x',
+                    'type': 'int',
+                    'transformer': 'normalize',
+                    'lower_bound': min([tup[1] for tup in problem.dataset_lookup.keys()]),
+                    'upper_bound': max([tup[1] for tup in problem.dataset_lookup.keys()]),},
+                   {'name': 'p1y',
+                    'type': 'int',
+                    'transformer': 'normalize',
+                    'lower_bound': min([tup[1] for tup in problem.dataset_lookup.keys()]),
+                    'upper_bound': max([tup[1] for tup in problem.dataset_lookup.keys()]),},
+                   {'name': 'p1z',
                     'type': 'int',
                     'transformer': 'normalize',
                     'lower_bound': min([tup[1] for tup in problem.dataset_lookup.keys()]),
@@ -346,7 +409,16 @@ def main(args=None, prs=None):
                 Integer(low=input_space[1]['lower_bound'],
                         high=input_space[1]['upper_bound'],
                         transform='normalize',
-                        name='p1'),])
+                        name='p1x'),
+                Integer(low=input_space[2]['lower_bound'],
+                        high=input_space[2]['upper_bound'],
+                        transform='normalize',
+                        name='p1y'),
+                Integer(low=input_space[3]['lower_bound'],
+                        high=input_space[3]['upper_bound'],
+                        transform='normalize',
+                        name='p1z'),
+                ])
 
     # Meta Dicts are part of building surrogate models for each input, but have a lot of common
     # specification templated here
@@ -355,7 +427,7 @@ def main(args=None, prs=None):
                       'input_space': input_space,
                       'output_space': output_space,
                       'parameter_space': parameter_space,
-                      'loadable_machine_configurations': {'theta': {'intel': {'nodes': NODE_COUNT, 'cores': threads_per_node}}},
+                      'loadable_machine_configurations': {SYSTEM: {'intel': {'nodes': NODE_COUNT, 'cores': threads_per_node}}},
                       'loadable_software_configurations': {}
                      }
     # Used to have consistent machine definition
@@ -363,7 +435,7 @@ def main(args=None, prs=None):
         "tuning_problem_name": base_meta_dict['tuning_problem_name'],
         "use_crowd_repo": "no",
         "machine_configuration": {
-            "machine_name": "theta",
+            "machine_name": SYSTEM,
             "intel": { "nodes": NODE_COUNT, "cores": threads_per_node }
         },
         "software_configuration": {},
@@ -387,7 +459,7 @@ def main(args=None, prs=None):
                                                     modeler=surrogate_metadata['modeler'],
                                                     input_task=surrogate_metadata['task_parameter'],
                                                     function_evaluations=data['func_eval'])
-    wrapped_objectives = wrap_objective(objectives, model_functions, task_keys=['mpi_ranks','p1'], machine_info=machine_info)
+    wrapped_objectives = wrap_objective(objectives, model_functions, task_keys=['mpi_ranks','p1x','p1y','p1z'], machine_info=machine_info)
     #func_evals = []
     #for prior_data in prior_traces:
     #    func_evals.extend(prior_data['func_eval'])
