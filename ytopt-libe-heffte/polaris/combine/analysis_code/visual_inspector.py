@@ -27,6 +27,7 @@ def build(prs=None):
     prs.add_argument("--no-plots", action="store_true", help="Skip visuals")
     prs.add_argument("--normalize-y", action="store_true", help="Normalize y-axis values")
     prs.add_argument("--smart-names", action="store_true", help="Attempt to make better names for plot legends")
+    prs.add_argument("--legend-loc", default="center right", help="Matplotlib legend location")
     return prs
 
 def parse(prs=None, args=None):
@@ -43,10 +44,10 @@ def parse(prs=None, args=None):
     if args.crawl_directory is not None and args.rename is not None:
         no_crawl_rename = "Cannot specify --crawl-directory and --rename at the same time. Use --directory instead"
         raise ValueError(no_crawl_rename)
-    elif len(args.rename) > 0 and len(args.rename) != len(args.directory):
+    elif args.rename is not None and len(args.rename) > 0 and len(args.rename) != len(args.directory):
         mismatch_length = "Length of --directory and --rename arguments must be the same"
         raise ValueError(mismatch_length)
-    elif len(args.rename) == 0:
+    elif args.rename is None or len(args.rename) == 0:
         args.rename = [None] * len(args.directory)
     if args.highlight >= 0:
         args.directory = [args.directory[args.highlight]]
@@ -217,7 +218,7 @@ def visualizations(frames, names, args):
     if args.smart_names:
         ax.set_title(smart_title(names))
         names = [smart_name(_) for _ in names]
-    plt.legend(leglines, names, loc='center right', title="Data Source (#Samples)")
+    plt.legend(leglines, names, loc=args.legend_loc, title="Data Source (#Samples)")
     if args.title is not None:
         plt.title(args.title)
     if args.save is None:
