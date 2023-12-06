@@ -27,14 +27,14 @@ def build():
                        help="Name the ensemble directory suffix (default: prefix 'ensemble_' has no custom suffix)")
     files.add_argument("--ens-static-path", action='store_true',
                        help="Disable randomization of ensemble directory suffix (default: Added to prevent filename collisions LibEnsemble cannot tolerate)")
-    files.add_argument("--ens-template", default="run_ytopt.py",
+    files.add_argument("--ens-template", default="wrapper_components/run_ytopt.py",
                        help="Template for libEnsemble driver (default: %(default)s)")
     files.add_argument("--ens-script", default="qsub.batch",
                        help="Template for job submission script that calls libEnsemble driver (default: %(default)s)")
     files.add_argument("--ens-static", action='store_true',
                        help="Override templates rather than copying to unique name (default: Vary name to prevent multi-job clobbering)")
     files.add_argument("--resume", nargs="*", default=None,
-                       help="CSV files to treat as prior history without re-evaluating on the system (default: none; only operable for --ens-template=run_ytopt.py)")
+                       help=f"CSV files to treat as prior history without re-evaluating on the system (default: none; only operable for --ens-template={files.get_default('ens_template')})")
     # SEEDS
     seeds = parser.add_argument_group("Seeds", "Arguments that control randomization seeding")
     seeds.add_argument("--seed-configspace", type=int, default=1234,
@@ -78,7 +78,7 @@ def build():
     scaling.add_argument("--gpu-override", type=int, default=None,
                         help="Override automatic GPU detection to set max_gpu value (default: Detect when --gpu-enabled)")
     # GaussianCopula
-    gc = parser.add_argument_group("GaussianCopula", "Arguments for Gaussian Copula (must use --libensemble-target=run_gctla.py)")
+    gc = parser.add_argument_group("GaussianCopula", "Arguments for Gaussian Copula (must use --libensemble-target=wrapper_components/run_gctla.py)")
     gc.add_argument("--gc-sys", type=int, default=None,
                     help="GC's target # MPI ranks (default: Defers to --mpi-ranks)")
     gc.add_argument("--gc-app", type=int, default=None,
@@ -128,7 +128,7 @@ def parse(prs=None, args=None):
     args.ens_dir_path = f'"{args.ens_dir_path}"'
 
     # Similar treatment for template and script
-    args.ens_template_export = args.ens_template
+    args.ens_template_export = pathlib.Path('.').joinpath(pathlib.Path(args.ens_template).name)
     args.ens_script_export = args.ens_script
     if not args.ens_static:
         template = pathlib.Path(args.ens_template_export)
@@ -303,6 +303,8 @@ signal.signal(signal.SIGTERM, cleanup)
 signal.signal(signal.SIGINT, cleanup)
 
 if __name__ == '__main__':
+    import pdb
+    pdb.set_trace()
     args = parse()
     # Copy files
     shuffle = [(args.ens_template, args.ens_template_export, 'LibEnsemble template'),

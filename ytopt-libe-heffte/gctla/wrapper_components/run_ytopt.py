@@ -9,11 +9,12 @@ Execute locally via one of the following commands (e.g. 3 workers):
 The number of concurrent evaluations of the objective function will be 4-1=3.
 """
 
-import os
+import os, pathlib
 import glob
 import numpy as np
 NUMPY_SEED = 1
 np.random.seed(NUMPY_SEED)
+import pandas as pd
 import itertools
 import subprocess
 
@@ -33,15 +34,13 @@ from libensemble.tools import parse_args, save_libE_output, add_unique_random_st
 from libensemble import logger
 logger.set_level("DEBUG") # Ensure logs are worth reading
 
-from ytopt_asktell import persistent_ytopt  # Generator function, communicates with ytopt optimizer
-from ytopt_obj import init_obj  # Simulator function, calls Plopper
+from wrapper_components.ytopt_asktell import persistent_ytopt  # Generator function, communicates with ytopt optimizer
+from wrapper_components.ytopt_obj import init_obj  # Simulator function, calls Plopper
 
 import ConfigSpace as CS
 import ConfigSpace.hyperparameters as CSH
 from ConfigSpace import ConfigurationSpace, EqualsCondition
 from ytopt.search.optimizer import Optimizer
-
-import pandas as pd
 
 # Parse comms, default options from commandline
 nworkers, is_manager, libE_specs, user_args_in = parse_args()
@@ -78,12 +77,21 @@ for arg in int_args:
 if 'resume' in user_args and type(user_args['resume']) is str:
     user_args['resume'] = [user_args['resume']]
 
+# GPU Setting needs to be known in advance
+gpu_enabled = False
 # Set options so workers operate in unique directories
-here = os.getcwd() + '/'
 libE_specs['use_worker_dirs'] = True
 libE_specs['sim_dirs_make'] = False  # Otherwise directories separated by each sim call
 # Copy or symlink needed files into unique directories
-libE_specs['sim_dir_symlink_files'] = [here + f for f in ['speed3d.sh', 'speed3d_no_gpu_aware.sh', 'gpu_cleanup.sh', 'plopper.py', 'set_affinity_gpu_polaris.sh']]
+symlinkable = ['speed3d.sh',
+               'speed3d_no_gpu_aware.sh',
+               'plopper.py']
+if gpu_enabled:
+    symlinkable.extend(['gpu_cleanup.sh',
+                        'set_affinity_gpu_polaris.sh'])
+libE_specs['sim_dir_symlink_files'] = [pathlib.Path('wrapper_components').joinpath(f) for f in symlinkable]
+#here = os.getcwd() + '/'
+#libE_specs['sim_dir_symlink_files'] = [here + f for f in ['speed3d.sh', 'speed3d_no_gpu_aware.sh', 'gpu_cleanup.sh', 'plopper.py', 'set_affinity_gpu_polaris.sh']]
 ENSEMBLE_DIR_PATH = ""
 libE_specs['ensemble_dir_path'] = f'./ensemble_{ENSEMBLE_DIR_PATH}'
 #if you need to manually specify resource information, ie:
@@ -122,7 +130,7 @@ p6 = CSH.CategoricalHyperparameter(name='p6', choices=["-r2c_dir 0", "-r2c_dir 1
 
 # Cross-architecture is out-of-scope for now so we determine this for the current platform and leave it at that
 cpu_override = None
-gpu_enabled = False
+gpu_override = None
 cpu_ranks_per_node = 1
 
 c0 = CSH.Constant('c0', value='cufft' if gpu_enabled else 'fftw')
@@ -144,11 +152,15 @@ else:
 if cpu_ranks_per_node is None:
     cpu_ranks_per_node = threads_per_node
 if gpu_enabled:
-    proc = subprocess.run('nvidia-smi -L'.split(' '), capture_output=True)
-    if proc.returncode != 0:
-        raise ValueError("No GPUs Detected, but in GPU mode")
-    gpus = len(proc.stdout.decode('utf-8').strip().split('\n'))
-    print(f"Detected {gpus} GPUs on this machine")
+    if gpu_override is None:
+        proc = subprocess.run('nvidia-smi -L'.split(' '), capture_output=True)
+        if proc.returncode != 0:
+            raise ValueError("No GPUs Detected, but in GPU mode")
+        gpus = len(proc.stdout.decode('utf-8').strip().split('\n'))
+        print(f"Detected {gpus} GPUs on this machine")
+    else:
+        gpus = gpu_override
+        print(f"Override indicates {gpu_override} GPUs on this machine")
     ranks_per_node = gpus
 else:
     ranks_per_node = cpu_ranks_per_node

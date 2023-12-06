@@ -106,12 +106,21 @@ MPI_RANKS = 64
 CONFIGSPACE_SEED = 1234
 YTOPT_SEED = 2345
 
+# GPU Setting needs to be known in advance
+gpu_enabled = False
 # Set options so workers operate in unique directories
-here = os.getcwd() + '/'
 libE_specs['use_worker_dirs'] = True
 libE_specs['sim_dirs_make'] = False  # Otherwise directories separated by each sim call
 # Copy or symlink needed files into unique directories
-libE_specs['sim_dir_symlink_files'] = [here + f for f in ['speed3d.sh', 'speed3d_no_gpu_aware.sh', 'gpu_cleanup.sh', 'plopper.py', 'set_affinity_gpu_polaris.sh']]
+symlinkable = ['speed3d.sh',
+               'speed3d_no_gpu_aware.sh',
+               'plopper.py']
+if gpu_enabled:
+    symlinkable.extend(['gpu_cleanup.sh',
+                        'set_affinity_gpu_polaris.sh'])
+libE_specs['sim_dir_symlink_files'] = [pathlib.Path('wrapper_components').joinpath(f) for f in symlinkable]
+# here = os.getcwd() + '/'
+#libE_specs['sim_dir_symlink_files'] = [here + f for f in ['speed3d.sh', 'speed3d_no_gpu_aware.sh', 'gpu_cleanup.sh', 'plopper.py', 'set_affinity_gpu_polaris.sh']]
 ENSEMBLE_DIR_PATH = ""
 libE_specs['ensemble_dir_path'] = f'./ensemble_{ENSEMBLE_DIR_PATH}'
 #if you need to manually specify resource information, ie:
@@ -141,7 +150,6 @@ p6 = CSH.CategoricalHyperparameter(name='p6', choices=["-r2c_dir 0", "-r2c_dir 1
 # Cross-architecture is out-of-scope for now so we determine this for the current platform and leave it at that
 cpu_override = None
 gpu_override = None
-gpu_enabled = False
 cpu_ranks_per_node = 1
 
 c0 = CSH.Constant('c0', value='cufft' if gpu_enabled else 'fftw')
@@ -289,7 +297,7 @@ constraints = [{'constraint_class': 'ScalarRange', # App scale X limit
                     },
               ]
 # Fetch problem instance and set its space based on alterations
-import gc_tla_problem
+from wrapper_components import gc_tla_problem
 app_scale_name = gc_tla_problem.lookup_ival(NODE_COUNT, APP_SCALE_X, APP_SCALE_Y, APP_SCALE_Z)
 warnings.simplefilter('ignore') # I want the problem class to raise this warning, but I know about it and will properly handle it. No need to hear about the warning
 problem = getattr(gc_tla_problem, app_scale_name) #f"{app_scale_name}_{NODE_COUNT}")
@@ -575,7 +583,6 @@ if 'predictions-only' in user_args and user_args['predictions-only']:
     exit()
 
 def manager_save(H, gen_specs, libE_specs):
-    import pandas as pd
     unfinished = H[~H["sim_ended"]][gen_specs['persis_in']]
     finished = H[H["sim_ended"]][gen_specs['persis_in']]
     unfinished_log = pd.DataFrame(dict((k, unfinished[k].flatten()) for k in gen_specs['persis_in']))
