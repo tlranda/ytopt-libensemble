@@ -303,8 +303,6 @@ signal.signal(signal.SIGTERM, cleanup)
 signal.signal(signal.SIGINT, cleanup)
 
 if __name__ == '__main__':
-    import pdb
-    pdb.set_trace()
     args = parse()
     # Copy files
     shuffle = [(args.ens_template, args.ens_template_export, 'LibEnsemble template'),
