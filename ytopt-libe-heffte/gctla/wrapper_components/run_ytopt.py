@@ -84,8 +84,7 @@ libE_specs['use_worker_dirs'] = True
 libE_specs['sim_dirs_make'] = False  # Otherwise directories separated by each sim call
 # Copy or symlink needed files into unique directories
 symlinkable = ['speed3d.sh',
-               'speed3d_no_gpu_aware.sh',
-               'plopper.py']
+               'speed3d_no_gpu_aware.sh']
 if gpu_enabled:
     symlinkable.extend(['gpu_cleanup.sh',
                         'set_affinity_gpu_polaris.sh'])
