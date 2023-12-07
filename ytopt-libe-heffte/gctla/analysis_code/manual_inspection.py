@@ -10,49 +10,93 @@ from sdv.sampling.tabular import Condition
 from sdv.constraints import ScalarRange
 import argparse
 
-compare_cols = [f'p{_}' for _ in range(10)]
-convert_cols = [f'p{_}' for _ in range(7)]
+compare_cols = ['p0']+[f'p1{d}' for d in 'xyz']+[f'p{_}' for _ in range(2,10)]
 
 def make_dist(value_dict, data):
     # Use value dictionary to get distribution histogram for this dataset
     breakdown = {}
     common_denom = len(data)
-    for key in convert_cols:
+    for key in compare_cols:
         values = value_dict[key]
         keydata = list(data[key])
         breakdown[key] = [keydata.count(val) / common_denom for val in values]
-    # These need to be bucketized separately
-    for col in sorted(set(compare_cols).difference(set(convert_cols))):
-        key_ranges = value_dict[col][0]
-        breakdown[col] = [0] * (len(key_ranges)-1)
-        for idx, (a,b) in enumerate(zip(key_ranges[:-1], key_ranges[1:])):
-            breakdown[col][idx] += len(data[np.logical_and(data[col] < b, data[col] >= a)])  / common_denom
     return breakdown
 
-def load_csv(name, drop_invalid=False):
+def load_csv(name, drop_invalid=False, quantile=1.0, transform=None):
     data = pd.read_csv(name)
+    # Always invert FLOPs for analysis of metric
     data['FLOPS'] *= -1
     if drop_invalid:
         data = data[data['FLOPS'] > 0]
-    data = data.sort_values(by=['FLOPS']).reset_index(drop=True)
     data.insert(len(data.columns), 'source', [name]*len(data))
+    data = data.sort_values(by=['FLOPS']).reset_index(drop=True)
+    # Quantile selection
+    qlen = int(np.round(quantile * len(data), 0))
+    data = data.iloc[0:qlen]
+    # Transformation
+    if transform is not None:
+        for (key, info) in transform.items():
+            condition_dict, replacement = info
+            for (iiloc, compare) in condition_dict.items():
+                if data.loc[iiloc] != compare:
+                    match key:
+                        case 'p7' | 'p8':
+                            default, topo = minSurfaceSplit(data.loc[0,'p1x'],
+                                                            data.loc[0,'p1y'],
+                                                            data.loc[0,'p1z'],
+                                                            data.loc[0,'mpi_ranks'])
+                            mpi_ranks = data.loc[iiloc]
+                            top_depth = int(np.log2(mpi_ranks))
+                            np_replacement = np.asarray([[int(_) for _ in rep.split(' ')] for rep in replacement])
+                            compare_mpi_ranks = np.prod(np_replacement[0,0])
+                            max_depth = int(np.log2(compare_mpi_ranks))
+                            new_topo = []
+                            for t in data[key]:
+                                xyz = np.asarray([np.log2(int(_))/top_depth for _ in t.split(' ')])
+                                proj_xyz = 2 ** (xyz * max_depth)
+                                distances = ((np_replacement - proj_xyz) ** 2).sum(axis=1)
+                                best_match = np.argmin(distances)
+                                new_topo.append(" ".join([str(_) for _ in np_replacement[best_match]]))
+                            data.loc[:,key] = new_topo
+                            break
+                        case 'p9':
+                            seq = sequence_builder(data.loc[0,'threads_per_node'],
+                                                   data.loc[0,'ranks_per_node'])
+                            new_seq = []
+                            seq_len = len(seq)
+                            compare_len = len(replacement)
+                            for s in data[key]:
+                                new_seq.append(replacement[min(compare_len,int(seq.index(s)/seq_len * compare_len))])
+                            data.loc[:,key] = new_seq
+                            break
+                        case _:
+                            raise ValueError(f"No transformation known for key '{key}'")
+                    break
     return data
 
-def undersample_load(names, ratios):
-    loaded = [load_csv(name) for name in names]
-    combined = []
-    for data, ratio in zip(loaded, ratios):
-        subset = np.sort(np.random.choice(data.index, size=int(len(data.index)*(1.0-ratio)), replace=False))
-        combined.append(data.loc[subset.astype(int)])
-    return pd.concat(combined).reset_index(drop=True)
-
-def GC_SDV(source_dist, quantile, n_nodes=1, ranks_per_node=64, problem_class=64):
+def GC_SDV(source_dist, quantile, n_nodes=1, ranks_per_node=64, problem_x=64, problem_y=64, problem_z=64):
     conditions = [Condition({'mpi_ranks': n_nodes * ranks_per_node,
-                             'p1': problem_class,},
+                             'p1x': problem_x,
+                             'p1y': problem_y,
+                             'p1z': problem_z},
                             num_rows=200)]
-    constraints = [{'constraint_class': 'ScalarRange', # App scale limit
+    constraints = [{'constraint_class': 'ScalarRange', # App scale limits
                         'constraint_parameters': {
-                            'column_name': 'p1',
+                            'column_name': 'p1x',
+                            'low_value': 64,
+                            'high_value': 2048,
+                            'strict_boundaries': False,},
+                        },
+                   {'constraint_class': 'ScalarRange',
+                        'constraint_parameters': {
+                            'column_name': 'p1y',
+                            'low_value': 64,
+                            'high_value': 2048,
+                            'strict_boundaries': False,},
+                        },
+                   {'constraint_class': 'ScalarRange',
+                        'constraint_parameters': {
+                            'column_name': 'p1z',
                             'low_value': 64,
                             'high_value': 2048,
                             'strict_boundaries': False,},
@@ -64,31 +108,8 @@ def GC_SDV(source_dist, quantile, n_nodes=1, ranks_per_node=64, problem_class=64
                             'high_value': 16384,
                             'strict_boundaries': False,},
                         },
-                   {'constraint_class': 'ScalarRange', # P7 limit
-                        'constraint_parameters': {
-                            'column_name': 'p7',
-                            'low_value': 0,
-                            'high_value': 1,
-                            'strict_boundaries': False,},
-                        },
-                   {'constraint_class': 'ScalarRange', # P8 limit
-                        'constraint_parameters': {
-                            'column_name': 'p8',
-                            'low_value': 0,
-                            'high_value': 1,
-                            'strict_boundaries': False,},
-                        },
-                   {'constraint_class': 'ScalarRange', # P9 limit
-                        'constraint_parameters': {
-                            'column_name': 'p9',
-                            'low_value': 0,
-                            'high_value': 1,
-                            'strict_boundaries': False,},
-                        },
                   ]
-    train_data = source_dist[['c0',]+compare_cols+['mpi_ranks', 'FLOPS']]
-    train_data = train_data[train_data['FLOPS'] > train_data['FLOPS'].quantile(quantile)].drop(columns=['FLOPS'])
-    print(f"Selected {len(train_data)} values for TL Training distribution (quantile = {quantile})")
+    train_data = source_dist[['c0',]+compare_cols+['mpi_ranks',]]
     metadata = SingleTableMetadata()
     metadata.detect_from_dataframe(train_data)
     warnings.simplefilter('ignore')
@@ -100,6 +121,49 @@ def GC_SDV(source_dist, quantile, n_nodes=1, ranks_per_node=64, problem_class=64
     cond_samples = model.sample_from_conditions(conditions)
     return cond_samples, model
 
+def sequence_builder(threads_per_node, ranks_per_node):
+    max_depth = threads_per_node // ranks_per_node
+    sequence = []
+    depth = 1
+    while (seq := 2**depth) <= max_depth:
+        sequence.append(seq)
+        depth += 1
+        if depth > 3 and (seq := sequence[-1]+sequence[-2]) < max_depth:
+            sequence.append(seq)
+    if max_depth not in sequence:
+        sequence.append(max_depth)
+    return sequence
+
+# Minimum surface splitting solve is used as the default topology for FFT (picked by heFFTe when in-grid and/or out-grid topology == ' ')
+def surface(fft_dims, grid):
+    # Volume of FFT assigned to each process
+    box_size = (np.asarray(fft_dims) / np.asarray(grid)).astype(int)
+    # Sum of exchanged surface areas
+    return (box_size * np.roll(box_size, -1)).sum()
+def minSurfaceSplit(X, Y, Z, procs):
+    fft_dims = (X, Y, Z)
+    best_grid = (1, 1, procs)
+    best_surface = surface(fft_dims, best_grid)
+    best_grid = " ".join([str(_) for _ in best_grid])
+    topologies = []
+    # Consider other topologies that utilize all ranks
+    for i in range(1, procs+1):
+        if procs % i == 0:
+            remainder = int(procs / float(i))
+            for j in range(1, remainder+1):
+                candidate_grid = (i, j, int(remainder/j))
+                if np.prod(candidate_grid) != procs:
+                    continue
+                strtopology = " ".join([str(_) for _ in candidate_grid])
+                topologies.append(strtopology)
+                candidate_surface = surface(fft_dims, candidate_grid)
+                if candidate_surface < best_surface:
+                    best_surface = candidate_surface
+                    best_grid = strtopology
+    # Topologies are reversed such that the topology order is X-1-1 to 1-1-X
+    # This matches previous version ordering
+    return best_grid, list(reversed(topologies))
+
 def build():
     prs = argparse.ArgumentParser()
 
@@ -109,41 +173,27 @@ def build():
     target.add_argument("--ranks-per-node", "--rpn", type=int, default=64,
                      help="Number of ranks per node to determine MPI ranks based on # nodes (default: %(default)s)")
     target.add_argument("--problem-class", "--app-size", type=int, default=64,
-                     help="Target application size to predict in Conditional Sampling (default: %(default)s)")
+                     help="Target cube-based application size to predict in Conditional Sampling (default: %(default)s)")
+    target.add_argument("--problem-x", "--app-x", type=int, default=None,
+                     help="Explicit X-dimension application size for Conditional Sampling (default: --problem-class/--app-size value)")
+    target.add_argument("--problem-y", "--app-y", type=int, default=None,
+                     help="Explicit Y-dimension application size for Conditional Sampling (default: --problem-class/--app-size value)")
+    target.add_argument("--problem-z", "--app-z", type=int, default=None,
+                     help="Explicit Z-dimension application size for Conditional Sampling (default: --problem-class/--app-size value)")
 
     transfer = prs.add_argument_group('transfer')
-    transfer.add_argument("--scaling", choices=['strong', 'weak'], default='strong',
-                     help="Dataset selection based on demonstrating this kind of scaling (default: %(default)s)")
-    transfer.add_argument("--strong-direction", choices=['application', 'nodes'], default='nodes',
-                     help="Indicate strong scaling direction for source data for strong scaling (default: %(default)s)")
-    transfer.add_argument("--weak-node-ratio", type=int, default=2,
-                     help="Weak scaling ratio to place between node targets (default: %(default)s)")
-    transfer.add_argument("--weak-app-ratio", type=int, default=2,
-                     help="Weak scaling ratio to place between app targets (default: %(default)s)")
-    transfer.add_argument("--weak-basis", nargs=2, type=int, default=(2, 64),
-                     help="Basis nodes and app for weak scaling ratios to begin from (default: %(default)s)")
+    transfer.add_argument("--comparison", required=True,
+                     help="Data to use as ground truth for TL target")
+    transfer.add_argument("--dataset", nargs="*", default=None, required=True,
+                     help="Data to use in transfer learning")
     transfer.add_argument("--drop", nargs="*", default=None,
-                     help="Directories to not include in globbing based on nodes/class (default: No directories dropped)")
+                     help="Data to NOT include in transfer learning (anti-globbing) (default: always includes --comparison value)")
+    transfer.add_argument("--fit-quantile", type=float, default=0.8,
+                     help="Dataset filtered to top-quantile performance for GC fitting (default: %(default)s)")
 
-    filesystem = prs.add_argument_group('filesystem')
-    filesystem.add_argument("--node-pad", type=int, default=3,
-                     help="Number of zeros to pad node counts with in filenames (default: %(default)s)")
-    filesystem.add_argument("--problem-pad", type=int, default=4,
-                     help="Number of zeros to pad application sizes with in filenames (default: %(default)s)")
-    filesystem.add_argument("--base-directory", default='logs/ThetaSourceTasks',
-                     help="Directory to crawl for candidate tasks (default: %(default)s)")
-    filesystem.add_argument("--directory-prefix", default="Theta",
-                     help="Prefix for crawled directories (format: {base_directory}/{prefix}_#n_#a) (default prefix: %(default)s)")
-
-    sampling = prs.add_argument_group('sampling')
-    sampling.add_argument("--undersample", type=float, default=0.0,
-                     help="Initial ratio for random undersampling (default: %(default)s)")
-    sampling.add_argument("--growth-factor", type=float, default=1.0,
-                     help="Growth ratio for undersampling based on distance from target (default: %(default)s)")
-
-    options = prs.add_argument_group('options')
-    options.add_argument("--no-compute", action="store_true",
-                     help="Only load and undersample data (no computation, no charts; default: %(default)s)")
+    inspection = prs.add_argument_group("inspection")
+    inspection.add_argument("--quantile", type=float, default=0.8,
+                     help="Ground Truth quantile for TL to beat (deafult: %(default)s)")
     return prs
 
 def parse(args=None, prs=None):
@@ -151,143 +201,80 @@ def parse(args=None, prs=None):
         prs = build()
     if args is None:
         args = prs.parse_args()
-    args.n_nodes_pad = ("0" * (args.node_pad - len(str(args.n_nodes)))) + str(args.n_nodes)
-    args.problem_class_pad = ("0" * (args.problem_pad - len(str(args.problem_class)))) + str(args.problem_class)
+    # Set up dataset
     if args.drop is None:
         args.drop = []
+    if args.comparison not in args.drop:
+        args.drop.append(args.comparison)
+    data = []
+    for d in args.dataset:
+        if d not in args.drop:
+            data.append(d)
+    args.dataset = data
+    # Set problem class with explicit overrides
+    for attrname in [f"problem_{d}" for d in "xyz"]:
+        if getattr(args, attrname) is None:
+            setattr(args, attrname, args.problem_class)
     return args
 
 def main(args=None):
     args = parse(args)
-    # Get the compared distribution and source data files
-    source_glob = pathlib.Path(args.base_directory)
-    true_path = source_glob.joinpath(f"{args.directory_prefix}_{args.n_nodes_pad}n_{args.problem_class_pad}a")
-    source_files = []
-    presence = []
-    globbing_order = []
-    for globbed in source_glob.glob(f'{args.directory_prefix}_*n_*a'):
-        globbing_order.append(globbed)
-        # Target can never be included as source data
-        if globbed == true_path:
-            presence.append(0)
-            continue
-        elif len(args.drop) != 0 and (any([globbed.match('*'+drop+'*') for drop in args.drop])):
-            presence.append(2)
-            continue
-        split = str(globbed).split('_')
-        nodes, app = int(split[1][:-1]), int(split[2][:-1])
-        if args.scaling == 'strong':
-            # Strong scaling requirements:
-            # 1) Transfer direction does NOT match
-            # 2) Non-transfer direction DOES match
-            # 3) Not dropped by the drop list from arguments
-            if ((args.strong_direction == 'application' and app != args.problem_class and nodes == args.n_nodes) or\
-               (args.strong_direction == 'nodes' and app == args.problem_class and nodes != args.n_nodes)):
-                presence.append(1)
-                source_files.append(globbed.joinpath('manager_results.csv'))
-            else:
-                presence.append(-1)
-        else:
-            # Weak scaling requirements:
-            # 1) Only one dataset per level of transfer direction
-            # 2) Monotonically increasing magnitudes in both directions
-            # 3) Rate of growth per transfer direction should be held constant or near-constant
-            node_quotient, node_remainder = np.divmod(nodes, args.weak_basis[0])
-            app_quotient, app_remainder = np.divmod(app, args.weak_basis[1])
-            node_factor = node_quotient == 1
-            node_power = 0
-            while node_quotient > 1:
-                node_quotient /= args.weak_node_ratio
-                node_factor = node_quotient == 1
-                node_power += 1
-            app_factor = app_quotient == 1
-            app_power = 0
-            while app_quotient > 1:
-                app_quotient /= args.weak_app_ratio
-                app_factor = app_quotient == 1
-                app_power += 1
-            node_factor = node_factor and node_remainder == 0
-            app_factor = app_factor and app_remainder == 0
-            print(globbed, nodes, node_power, node_factor, args.weak_node_ratio, app, app_power, app_factor, args.weak_app_ratio)
-            if node_factor and app_factor and (node_power == app_power):
-                presence.append(1)
-                source_files.append(globbed.joinpath('manager_results.csv'))
-            else:
-                presence.append(-1)
-    # Compute offsets for undersampling distances
-    # Sort after the fact to make life easy
-    reordering = np.argsort(globbing_order)
-    source_files = np.asarray(sorted(source_files))
-    x = np.asarray(presence)[reordering]
-    print("\n".join([f"{a} -- {b}" for a,b in zip(np.asarray(globbing_order).astype(str)[reordering], x)]))
-    xp = np.where(x == 0)[0]
-    y = np.where(x > 0)[0]
-    left = np.where(y < xp)[0]
-    right = np.where(y > xp)[0]
-    ll = np.ones_like(left)
-    rr = np.ones_like(right)
-    for idx in range(len(ll)):
-        ll[:-idx] += 1
-    for idx in range(1,len(rr)):
-        rr[-idx:] += 1
-    multipliers = np.clip(args.undersample * (args.growth_factor * np.concatenate((ll,rr))), 0, 1)
-    # Adjust for dropped data
-    excluded = np.where(x>1)[0]
-    include_mask = [False if yy in excluded else True for yy in y]
-    multipliers = multipliers[include_mask]
-    # Get source data to TL from
-    if true_path.joinpath('manager_results.csv').exists:
-        true_path = true_path.joinpath('manager_results.csv')
-    elif true_path.joinpath('results.csv').exists:
-        print(f"Warning! Using partial results (results.csv, not manager_results.csv) for Truth")
-        true_path = true_path.joinpath('results.csv')
-    else:
-        No_True_Path = f"Could not generate a valid path to get true results based on {args.n_nodes} nodes and {args.problem_class} FFT size"
-        raise ValueError(No_True_Path)
-    truth = load_csv(true_path, drop_invalid=True)
-    print(f"Loaded {len(truth)} values for YTOPT true distribution (From: {true_path})")
+    # Load data
+    ground_truth = load_csv(args.comparison)
+    print(f"Loaded {len(ground_truth)} values for ground truth distribution (From: {args.comparison})")
     # Filter to what we'd like to see things look like
-    quantile = 0.8
-    best = truth[truth['FLOPS'] >= truth['FLOPS'].quantile(quantile)]
-    print(f"Selected {len(best)} values for YTOPT best distribution (quantile = {quantile})")
+    best = ground_truth[ground_truth['FLOPS'] >= ground_truth['FLOPS'].quantile(args.quantile)]
+    print(f"Selected {len(best)} values for best distribution (quantile = {args.quantile})")
 
-    # Determine available values ish
-    value_dict = dict((k, sorted(set(truth[k]))) for k in convert_cols)
-    candidate_orders = [_ for _ in itertools.product([0,1,2], repeat=3) if len(_) == len(set(_))]
-    budget = 64
-    factors = [2 ** x for x in range(int(np.log2(budget)),-1,-1)]
-    topology = []
-    for candidate in itertools.product(factors, repeat=3):
-        if np.prod(candidate) != budget or np.any([tuple([candidate[_] for _ in order]) in topology for order in candidate_orders]):
-            continue
-        topology.append(candidate)
-    topology = [','.join([str(_) for _ in candidate]) for candidate in topology]
-    topology.append(' ')
-    for col in ['p7', 'p8']:
-        value_dict[col] = (np.append(np.arange(len(topology))/len(topology), 1.0), topology)
-    for col in ['p9']:
-        value_dict[col] = (np.append(np.arange(2)/2, 1.0), [2,4])
+    # Determine available values
+    tpn_lookup = (0,'threads_per_node')
+    rpn_lookup = (0,'ranks_per_node')
+    mpi_lookup = (0,'mpi_ranks')
+    gt_seq = sequence_builder(ground_truth.loc[tpn_lookup],
+                              ground_truth.loc[rpn_lookup])
+    def_topo, gt_topo = minSurfaceSplit(args.problem_x,
+                                        args.problem_y,
+                                        args.problem_z,
+                                        ground_truth.loc[mpi_lookup])
+    transform_info = {'p7': ({mpi_lookup: ground_truth.loc[mpi_lookup]}, gt_topo),
+                      'p8': ({mpi_lookup: ground_truth.loc[mpi_lookup]}, gt_topo),
+                      'p9': ({tpn_lookup: ground_truth.loc[tpn_lookup],
+                              rpn_lookup: ground_truth.loc[rpn_lookup]}, gt_seq),
+                     }
+    fft_dim_scales = sorted([2**_ for _ in range(6,11)] + [1400])
+    value_dict = {'c0': ['fftw','cufft'],
+                  'p0': ['double','float'],
+                  'p1x': fft_dim_scales,
+                  'p1y': fft_dim_scales,
+                  'p1z': fft_dim_scales,
+                  'p2': ['-no-reorder','-reorder',' '],
+                  'p3': ['-a2a','-a2av',' '],
+                  'p4': ['-p2p','-p2p_pl',' '],
+                  'p5': ['-pencils','-slabs',' '],
+                  'p6': ['-r2c_dir 0','-r2c_dir 1','-r2c_dir 2',' '],
+                  'p7': gt_topo,
+                  'p8': gt_topo,
+                  'p9': gt_seq,
+                  }
 
-    source_dist = undersample_load(source_files, multipliers)
-    print(f"Loaded {len(source_dist)} values for TL distribution")
-    print("Source files and sampling ratios:")
-    print("\n".join([str(file)+f" @ {(1-mult)*100:.2f}%" for (file,mult) in zip(source_files, multipliers)]))
-
-    if args.no_compute:
-        exit()
+    source_dataset = []
+    for fname in args.dataset:
+        source_dataset.append(load_csv(fname, quantile=args.fit_quantile, transform=transform_info))
+    source_dataset = pd.concat(source_dataset).reset_index(drop=True)
+    print(f"Loaded {len(args.dataset)} files and {len(source_dataset)} values for TL distribution")
 
     # Set up TL model
-    cond_samples, model = GC_SDV(source_dist, quantile, args.n_nodes, args.ranks_per_node, args.problem_class)
+    cond_samples, model = GC_SDV(source_dataset, args.fit_quantile, args.n_nodes, args.ranks_per_node, args.problem_x, args.problem_y, args.problem_z)
     # Make the comparable distributions
-    true_dist = make_dist(value_dict, truth)
+    true_dist = make_dist(value_dict, ground_truth)
     best_dist = make_dist(value_dict, best)
-    tl_dist = make_dist(value_dict, source_dist)
+    tl_dist = make_dist(value_dict, source_dataset)
     cond_dist = make_dist(value_dict, cond_samples)
 
     # Prepare sub distributions for source data
     sub_dists = []
     source_names = []
-    for (source_name, by_source) in source_dist.groupby('source'):
+    for (source_name, by_source) in source_dataset.groupby('source'):
         sub_dists.append(make_dist(value_dict, by_source))
         source_names.append(str(pathlib.Path(source_name).parent.stem))
     # Compare
@@ -309,15 +296,12 @@ def main(args=None):
         tld_best_arr = np.asarray([_ for _ in bs * np.log(bs / tld) if np.isfinite(_)])
         csd_best_arr = np.asarray([_ for _ in bs * np.log(bs / csd) if np.isfinite(_)])
         warnings.simplefilter('default')
-        if col in convert_cols:
-            options = value_dict[col]
-        else:
-            options = value_dict[col][1]
+        options = value_dict[col]
         print(col, "KL Div:\t", kl_div[idx])
         print("Options:\t",options)
-        print("True Dist:\t", td, (td * len(truth)).astype(int), sum((td * len(truth)).astype(int)))
+        print("True Dist:\t", td, (td * len(ground_truth)).astype(int), sum((td * len(ground_truth)).astype(int)))
         print("Best Dist:\t", bs, (bs * len(best)).astype(int), sum((bs * len(best)).astype(int)))
-        print("TL Data Dist:\t", tld, (tld * len(source_dist)).astype(int), sum((tld * len(source_dist)).astype(int)))
+        print("TL Data Dist:\t", tld, (tld * len(source_dataset)).astype(int), sum((tld * len(source_dataset)).astype(int)))
         print("Conditional Dist:\t", csd, (csd * len(cond_samples)).astype(int), sum((csd * len(cond_samples)).astype(int)))
         print("TL vs Truth Partial KL:\t", tld_truth_arr, tld_truth_arr.sum())
         print("CS vs Truth Partial KL:\t", csd_truth_arr, csd_truth_arr.sum())
@@ -336,7 +320,7 @@ def main(args=None):
         fig.savefig(f"KL_Div_{col}.png", dpi=400)
         # Get Source attribution as stacked bar plot
         fig, ax = plt.subplots()
-        heights = np.zeros((len(set(source_dist['source'].values)), len(options)))
+        heights = np.zeros((len(set(source_dataset['source'].values)), len(options)))
         for src_idx in range(len(sub_dists)):
             col_heights = np.asarray(sub_dists[src_idx][col])
             # Normalize and scale to TLD
