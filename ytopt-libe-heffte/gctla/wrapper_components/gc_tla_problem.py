@@ -141,6 +141,7 @@ def customize_space(self, class_size):
 APP_SCALES = [64,128,256,512,1024,1400,2048]
 APP_SCALE_NAMES = ['N','S','M','L','XL','H','XH']
 NODE_SCALES = [1,2,4,8,16,32,64,128]
+list_of_list_initializer = [NODE_SCALES] + ([APP_SCALES] * 3)
 def lookup_ival(nodes, x_dim, y_dim, z_dim):
     if nodes not in NODE_SCALES:
         Unknown_Node_Scale = f"{__file__} does not define node scale {nodes}. Available sizes: {NODE_SCALES}"
@@ -289,5 +290,6 @@ class heffte_plopper(LibE_Plopper):
 
 
 __getattr__ = libe_problem_builder(lookup_ival, inv_lookup_ival, input_space, HERE, name='heFFTe_Problem',
-                                    customize_space=customize_space, plopper_class=heffte_plopper)
+                                    customize_space=customize_space, plopper_class=heffte_plopper,
+                                    lol=list_of_list_initializer)
 

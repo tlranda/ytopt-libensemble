@@ -8,8 +8,8 @@ from GPTune.options import Options
 from GPTune.model import GPy
 
 import openturns as ot
-import argparse, sys, os, pathlib
-import numpy as np, pandas as pd, uuid, time, copy
+import numpy as np, pandas as pd
+import argparse, sys, os, pathlib, uuid, time, copy, subprocess
 
 import gc_tla_problem
 import warnings
@@ -37,7 +37,7 @@ def build():
     prs.add_argument("--system", choices=["theta", "polaris"], default="polaris", help="Call formatting for which cluster (default: %(default)s)")
     prs.add_argument("--cpu-override", type=int, default=None, help="Number of CPU cores on the system (default: detected at runtime)")
     prs.add_argument("--gpu-override", type=int, default=None, help="Number of GPUs on the system (default: detected at runtime)")
-    prs.add_arguemnt("--gpu-enabled", action="store_true", help="Unless this flag is given, GPUs will not be used")
+    prs.add_argument("--gpu-enabled", action="store_true", help="Unless this flag is given, GPUs will not be used")
     prs.add_argument("--cpu-ranks-per-node", type=int, default=None, help="Number of CPU ranks to give each node (default: value of cpu-cores on system AKA cpu-override)")
     return prs
 
@@ -83,7 +83,10 @@ def csvs_to_gptune(fnames, tuning_metadata):
         prev_worker_time = {}
         for index, row in csv.iterrows():
             new_eval = dict((k,v) for (k,v) in func_template.items())
-            new_eval['task_parameter'] = {'mpi_ranks': row['mpi_ranks'], 'p1': row['p1']}
+            new_eval['task_parameter'] = {'mpi_ranks': row['mpi_ranks'],
+                                          'p1x': row['p1x'],
+                                          'p1y': row['p1y'],
+                                          'p1z': row['p1z'],}
             # SINGLE update per task size
             if index == 0:
                 sizes.append(list(new_eval['task_parameter'].values()))
@@ -155,7 +158,6 @@ def main(args=None, prs=None):
     np.random.seed(args.seed)
 
     MPI_RANKS = args.sys
-    args.nodes = MPI_RANKS // 64
     APP_SCALE_X = args.app_x
     APP_SCALE_Y = args.app_y
     APP_SCALE_Z = args.app_z
@@ -269,7 +271,7 @@ def main(args=None, prs=None):
                 remainder = int(procs / float(i))
                 for j in range(1, remainder+1):
                     candidate_grid = (i, j, int(remainder/j))
-                    if np.prod(candidate.grid) != procs:
+                    if np.prod(candidate_grid) != procs:
                         continue
                     strtopology = " ".join([str(_) for _ in candidate_grid])
                     topologies.append(strtopology)
@@ -287,18 +289,20 @@ def main(args=None, prs=None):
     # arg9
     p8 = CSH.CategoricalHyperparameter(name='p8', choices=topologies, default_value=default_topology)
     # number of threads is hardware-dependent
-    p9 = CSH.OrdinalHyperparameter(name='p9', sequence=sequence, default_value=max_depth)
-    cs.add_hyperparameters([p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, c0])
+    # GPTune needs these to be strings
+    p9 = CSH.OrdinalHyperparameter(name='p9', sequence=[str(_) for _ in sequence], default_value=str(max_depth))
+    cs.add_hyperparameters([p0, p1x, p1y, p1z, p2, p3, p4, p5, p6, p7, p8, p9, c0])
     MACHINE_IDENTIFIER = SYSTEM
 
     # Create a problem instance
-    scale_name = gc_tla_problem.lookup_ival(args.nodes, APP_SCALE_X, APP_SCALE_Y, APP_SCALE_Z)
+    NODE_COUNT = MPI_RANKS // ranks_per_node
+    scale_name = gc_tla_problem.lookup_ival(NODE_COUNT, APP_SCALE_X, APP_SCALE_Y, APP_SCALE_Z)
     warnings.simplefilter('ignore')
     problem = getattr(gc_tla_problem, scale_name)
     problem.selflog = args.log
     problem.plopper.returnmode = 'GPTune'
     problem.plopper.set_architecture_info(threads_per_node = ranks_per_node,
-                                          gpus = ranks_per_node if gpu_enabled else 0,
+                                          gpus = ranks_per_node if args.gpu_enabled else 0,
                                           nodes = NODE_COUNT,
                                           mpi_ranks = MPI_RANKS,
                                           machine_identifier = MACHINE_IDENTIFIER,
@@ -309,7 +313,7 @@ def main(args=None, prs=None):
         'mpi_ranks': MPI_RANKS,
         'threads_per_node': ranks_per_node,
         'ranks_per_node': ranks_per_node,
-        'gpu_enabled': gpu_enabled,
+        'gpu_enabled': args.gpu_enabled,
         'libE_workers': 1,
         'app_timeout': 300,
         'sequence': sequence,
@@ -341,7 +345,7 @@ def main(args=None, prs=None):
                 opts['categories'] = ('64','128','256','512','1024','1400',)
             elif param_name == 'c0':
                 # Replace constant with full range of options
-                opts['categories'] = ('cufft',) if gpu_enabled else ('fftw',)
+                opts['categories'] = ('cufft',) if args.gpu_enabled else ('fftw',)
             else:
                 # Actual constant
                 opts['categories'] = (param.value,)
@@ -381,26 +385,55 @@ def main(args=None, prs=None):
 
     # Steal input space limits from Problem object API
     # Tuple is (NODES, APP)
+    # Determine values ONCE
+    mpi_min_max = [np.inf,-np.inf]
+    x_min_max = [np.inf,-np.inf]
+    y_min_max = [np.inf,-np.inf]
+    z_min_max = [np.inf,-np.inf]
+    for tup in problem.dataset_lookup.keys():
+        # Used to be [(NODE_SCALE_INT, APP_SCALE_INT)]
+        # Now will be [(NODE_SCALE_INT, APP_X_INT, APP_Y_INT, APP_Z_INT)]
+        # While I expect the bounds on xyz to be identical, will check independently JIC
+        mpi = tup[0] * ranks_per_node
+        x = tup[1]
+        y = tup[2]
+        z = tup[3]
+        if mpi < mpi_min_max[0]:
+            mpi_min_max[0] = mpi
+        elif mpi > mpi_min_max[1]:
+            mpi_min_max[1] = mpi
+        if x < x_min_max[0]:
+            x_min_max[0] = x
+        elif x > x_min_max[1]:
+            x_min_max[1] = x
+        if y < y_min_max[0]:
+            y_min_max[0] = y
+        elif y > y_min_max[1]:
+            y_min_max[1] = y
+        if z < z_min_max[0]:
+            z_min_max[0] = z
+        elif z > z_min_max[1]:
+            z_min_max[1] = z
     input_space = [{'name': 'mpi_ranks',
                     'type': 'int',
                     'transformer': 'normalize',
-                    'lower_bound': int(min([tup[0]*ranks_per_node for tup in problem.dataset_lookup.keys()])),
-                    'upper_bound': int(max([tup[0]*ranks_per_node for tup in problem.dataset_lookup.keys()])),},
+                    'lower_bound': mpi_min_max[0],
+                    'upper_bound': mpi_min_max[1],},
                    {'name': 'p1x',
                     'type': 'int',
                     'transformer': 'normalize',
-                    'lower_bound': min([tup[1] for tup in problem.dataset_lookup.keys()]),
-                    'upper_bound': max([tup[1] for tup in problem.dataset_lookup.keys()]),},
+                    'lower_bound': x_min_max[0],
+                    'upper_bound': x_min_max[1],},
                    {'name': 'p1y',
                     'type': 'int',
                     'transformer': 'normalize',
-                    'lower_bound': min([tup[1] for tup in problem.dataset_lookup.keys()]),
-                    'upper_bound': max([tup[1] for tup in problem.dataset_lookup.keys()]),},
+                    'lower_bound': y_min_max[0],
+                    'upper_bound': y_min_max[1],},
                    {'name': 'p1z',
                     'type': 'int',
                     'transformer': 'normalize',
-                    'lower_bound': min([tup[1] for tup in problem.dataset_lookup.keys()]),
-                    'upper_bound': max([tup[1] for tup in problem.dataset_lookup.keys()]),},
+                    'lower_bound': z_min_max[0],
+                    'upper_bound': z_min_max[1],},
                    ]
     IS = Space([Integer(low=input_space[0]['lower_bound'],
                         high=input_space[0]['upper_bound'],
@@ -452,6 +485,8 @@ def main(args=None, prs=None):
     # Teach GPTune about these prior evaluations
     surrogate_metadata = dict((k,v) for (k,v) in base_meta_dict.items())
     model_functions = {}
+    import pdb
+    pdb.set_trace()
     for size, data in zip(prior_sizes, prior_traces):
         surrogate_metadata['task_parameter'] = [size]
         print(f"Build Surrogate model for size {size}")
