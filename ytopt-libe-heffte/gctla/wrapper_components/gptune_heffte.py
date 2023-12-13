@@ -23,6 +23,7 @@ from ConfigSpace import ConfigurationSpace, EqualsCondition
 def build():
     prs = argparse.ArgumentParser()
     prs.add_argument("--inputs", type=str, nargs="+", required=True, help="Input files to learn from")
+    prs.add_argument("--ignore", type=str, nargs="*", default=None, help="Files to exclude from --inputs (ie: de-globbing)")
     prs.add_argument("--sys", type=int, required=True, help="System scale to target (mpi_ranks)")
     prs.add_argument("--app", type=int, default=64, help="Default application dimension to target (fft size), default: %(default)s")
     prs.add_argument("--app-x", type=int, default=None, help="FFT-size in X dimension (default to --app value)")
@@ -50,9 +51,43 @@ def parse(args=None, prs=None):
     for argname in [f'app_{d}' for d in 'xyz']:
         if getattr(args, argname) is None:
             setattr(args, argname, args.app)
+    if args.ignore is None:
+        args.ignore = []
+    args.inputs = [_ for _ in args.inputs if _ not in args.ignore]
     return args
 
-def csvs_to_gptune(fnames, tuning_metadata):
+# Minimum surface splitting solve is used as the default topology for FFT (picked by heFFTe when in-grid and/or out-grid topology == ' ')
+def surface(fft_dims, grid):
+    # Volume of FFT assigned to each process
+    box_size = (np.asarray(fft_dims) / np.asarray(grid)).astype(int)
+    # Sum of exchanged surface areas
+    return (box_size * np.roll(box_size, -1)).sum()
+
+def minSurfaceSplit(X, Y, Z, procs):
+    fft_dims = (X, Y, Z)
+    best_grid = (1, 1, procs)
+    best_surface = surface(fft_dims, best_grid)
+    best_grid = " ".join([str(_) for _ in best_grid])
+    topologies = []
+    # Consider other topologies that utlize all ranks
+    for i in range(1, procs+1):
+        if procs % i == 0:
+            remainder = int(procs / float(i))
+            for j in range(1, remainder+1):
+                candidate_grid = (i, j, int(remainder/j))
+                if np.prod(candidate_grid) != procs:
+                    continue
+                strtopology = " ".join([str(_) for _ in candidate_grid])
+                topologies.append(strtopology)
+                candidate_surface = surface(fft_dims, candidate_grid)
+                if candidate_surface < best_surface:
+                    best_surface = candidate_surface
+                    best_grid = strtopology
+    # Topologies are reversed such that the topology order is X-1-1 to 1-1-X
+    # This matches the previous version ordering
+    return best_grid, list(reversed(topologies))
+
+def csvs_to_gptune(fnames, tuning_metadata, topologies):
     # Top-level JSON info, func_eval will be filled based on data
     json_dict = {'tuning_problem_name': tuning_metadata['tuning_problem_name'],
                  'tuning_problem_category': None,
@@ -70,6 +105,9 @@ def csvs_to_gptune(fnames, tuning_metadata):
     parameters = None
     if type(fnames) is str:
         fnames = [fnames]
+    # Only need to compute this once
+    maxdepth = np.log2(np.prod(np.asarray(topologies[0].split(' ')).astype(int)))
+    np_topologies = np.asarray([_.split(' ') for _ in topologies]).astype(int)
     # Prepare return structures
     sizes = [] # Task parameter combinations
     dicts = [] # GPTune-ified data for the task parameter combination
@@ -81,6 +119,8 @@ def csvs_to_gptune(fnames, tuning_metadata):
         if parameters is None:
             parameters = [_ for _ in csv.columns if (_.startswith('p') or _.startswith('c')) and _ != 'predicted']
         prev_worker_time = {}
+        # Prepare topology conversion
+        local_maxdepth = np.log2(np.prod(np.asarray(csv.loc[0,'p7'].split(' ')).astype(int)))
         for index, row in csv.iterrows():
             new_eval = dict((k,v) for (k,v) in func_template.items())
             new_eval['task_parameter'] = {'mpi_ranks': row['mpi_ranks'],
@@ -91,6 +131,14 @@ def csvs_to_gptune(fnames, tuning_metadata):
             if index == 0:
                 sizes.append(list(new_eval['task_parameter'].values()))
             new_eval['tuning_parameter'] = dict((col, str(row[col])) for col in parameters)
+            # P7-8 may require topology reclassification
+            if local_maxdepth != maxdepth:
+                for key in ['p7','p8']:
+                    keylocal = np.asarray(new_eval['tuning_parameter'][key].split(' ')).astype(int)
+                    projected = 2 ** (np.log2(keylocal) / local_maxdepth * maxdepth)
+                    distances = ((np_topologies - projected) ** 2).sum(axis=1)
+                    best_match = np.argmin(distances)
+                    new_eval['tuning_parameter'][key] = topologies[best_match]
             new_eval['evaluation_result'] = {'flops': row['FLOPS']}
             elapsed_time = row['elapsed_sec']
             if row['libE_id'] in prev_worker_time.keys():
@@ -114,7 +162,8 @@ def wrap_objective(objective, surrogate_to_size_dict, task_keys, machine_info):
         if task in surrogate_to_size_dict.keys():
             # For whatever reason, I have GPTune treating P1 categories as strings so you
             # have to honor that and cast the key-value to string
-            point['p1'] = str(point['p1'])
+            for xyz in 'xyz':
+                point[f'p1{xyz}'] = str(point[f'p1{xyz}'])
             result = surrogate_to_size_dict[task](point)
             # GPTune expects a time component -- just dupe our FOM in there
             result['time'] = result['flops']
@@ -254,34 +303,6 @@ def main(args=None, prs=None):
     #p9 = CSH.OrdinalHyperparameter(name='p9', sequence=sequence, default_value=max_depth)
 
     # Minimum surface splitting solve is used as the default topology for FFT (picked by heFFTe when in-grid and/or out-grid topology == ' ')
-    def surface(fft_dims, grid):
-        # Volume of FFT assigned to each process
-        box_size = (np.asarray(fft_dims) / np.asarray(grid)).astype(int)
-        # Sum of exchanged surface areas
-        return (box_size * np.roll(box_size, -1)).sum()
-    def minSurfaceSplit(X, Y, Z, procs):
-        fft_dims = (X, Y, Z)
-        best_grid = (1, 1, procs)
-        best_surface = surface(fft_dims, best_grid)
-        best_grid = " ".join([str(_) for _ in best_grid])
-        topologies = []
-        # Consider other topologies that utlize all ranks
-        for i in range(1, procs+1):
-            if procs % i == 0:
-                remainder = int(procs / float(i))
-                for j in range(1, remainder+1):
-                    candidate_grid = (i, j, int(remainder/j))
-                    if np.prod(candidate_grid) != procs:
-                        continue
-                    strtopology = " ".join([str(_) for _ in candidate_grid])
-                    topologies.append(strtopology)
-                    candidate_surface = surface(fft_dims, candidate_grid)
-                    if candidate_surface < best_surface:
-                        best_surface = candidate_surface
-                        best_grid = strtopology
-        # Topologies are reversed such that the topology order is X-1-1 to 1-1-X
-        # This matches the previous version ordering
-        return best_grid, list(reversed(topologies))
     default_topology, topologies = minSurfaceSplit(APP_SCALE_X, APP_SCALE_Y, APP_SCALE_Z, MPI_RANKS)
 
     # arg8
@@ -481,12 +502,10 @@ def main(args=None, prs=None):
     constraints = {}
     objectives = problem.objective
     # Load prior evaluations in GPTune-ready format
-    prior_traces, prior_sizes = csvs_to_gptune(args.inputs, tuning_metadata)
+    prior_traces, prior_sizes = csvs_to_gptune(args.inputs, tuning_metadata, topologies)
     # Teach GPTune about these prior evaluations
     surrogate_metadata = dict((k,v) for (k,v) in base_meta_dict.items())
     model_functions = {}
-    import pdb
-    pdb.set_trace()
     for size, data in zip(prior_sizes, prior_traces):
         surrogate_metadata['task_parameter'] = [size]
         print(f"Build Surrogate model for size {size}")
