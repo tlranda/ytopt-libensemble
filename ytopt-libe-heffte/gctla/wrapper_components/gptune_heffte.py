@@ -321,6 +321,22 @@ def main(args=None, prs=None):
     warnings.simplefilter('ignore')
     problem = getattr(gc_tla_problem, scale_name)
     problem.selflog = args.log
+    # Possibly clean up the default tmp_files
+    if len(os.listdir(problem.plopper.outputdir)) == 0:
+        print("Removing empty default output directory")
+        os.removedirs(problem.plopper.outputdir)
+    outputdir = "gptune_files"
+    # Deprecate old files to new name so files don't get jumbled together
+    if os.path.exists(outputdir):
+        i = 0
+        mvdir = lambda: f"{outputdir}_{i}"
+        while os.path.exists(mvdir()):
+            i += 1
+        mvdir = mvdir()
+        os.rename(outputdir, mvdir)
+        print(f"Moved existing gptune files to {mvdir}")
+    os.makedirs(outputdir)
+    problem.plopper.outputdir = outputdir
     problem.plopper.returnmode = 'GPTune'
     problem.plopper.set_architecture_info(threads_per_node = ranks_per_node,
                                           gpus = ranks_per_node if args.gpu_enabled else 0,
