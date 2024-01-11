@@ -231,12 +231,17 @@ class heffte_plopper(LibE_Plopper):
             raise ValueError(f"Cleanup Command failed to run (Return code: {status.returncode})")
 
     def set_architecture_info(self, **kwargs):
+        if hasattr(self, 'cmd_template'):
+            old_cmd_string = self.cmd_template
+        else:
+            old_cmd_string = None
         super().set_architecture_info(**kwargs)
         # Machine identifier changes proper invocation to utilize allocated resources
         # Also customize timeout based on application scale per system
         self.known_timeouts = {}
         if 'polaris' in self.machine_identifier:
-            self.cmd_template = "mpiexec -n {mpi_ranks} --ppn {ranks_per_node} --depth {depth} --cpu-bind depth --env OMP_NUM_THREADS={depth} sh ./set_affinity_gpu_polaris.sh {interimfile}"
+            if (old_cmd_string is not None and old_cmd_string != self.cmd_template) or (old_cmd_string is None and not hasattr(self, 'cmd_template')):
+                self.cmd_template = "mpiexec -n {mpi_ranks} --ppn {ranks_per_node} --depth {depth} --cpu-bind depth --env OMP_NUM_THREADS={depth} sh ./wrapper_components/set_affinity_gpu_polaris.sh {interimfile}"
             polaris_timeouts = {(64,64,64): 10.0,
                                 (128,128,128): 10.0,
                                 (256,256,256): 10.0,
@@ -244,7 +249,8 @@ class heffte_plopper(LibE_Plopper):
                                }
             self.known_timeouts.update(polaris_timeouts)
         elif 'theta' in self.machine_identifier:
-            self.cmd_template = "aprun -n {mpi_ranks} -N {ranks_per_node} -cc depth -d {depth} -j {j} -e OMP_NUM_THREADS={depth} sh {interimfile}"
+            if (old_cmd_string is not None and old_cmd_string != self.cmd_template) or (old_cmd_string is None and not hasattr(self, 'cmd_template')):
+                self.cmd_template = "aprun -n {mpi_ranks} -N {ranks_per_node} -cc depth -d {depth} -j {j} -e OMP_NUM_THREADS={depth} sh {interimfile}"
             theta_timeouts = {(64,64,64): 20.0,
                               (128,128,128): 40.0,
                               (256,256,256): 60.0,

@@ -212,7 +212,7 @@ def main(args=None, prs=None):
     APP_SCALE_Z = args.app_z
     SYSTEM = args.system
     if SYSTEM == "polaris":
-        template_string = "mpiexec -n {mpi_ranks} --ppn {ranks_per_node} --depth {depth} --cpu-bind depth --env OMP_NUM_THREADS={depth} sh ./set_affinity_gpu_polaris.sh {interimfile}"
+        template_string = "mpiexec -n {mpi_ranks} --ppn {ranks_per_node} --depth {depth} --cpu-bind depth --env OMP_NUM_THREADS={depth} sh ./wrapper_components/set_affinity_gpu_polaris.sh {interimfile}"
     elif SYSTEM == "theta":
         template_string = "aprun -n {mpi_ranks} -N {ranks_per_node} -cc depth -d {depth} -j {j} -e OMP_NUM_THREADS={depth} sh {interimfile}"
     else:
