@@ -518,6 +518,7 @@ def main(args=None, prs=None):
     constraints = {}
     objectives = problem.objective
     # Load prior evaluations in GPTune-ready format
+    warnings.simplefilter('error')
     prior_traces, prior_sizes = csvs_to_gptune(args.inputs, tuning_metadata, topologies)
     # Teach GPTune about these prior evaluations
     surrogate_metadata = dict((k,v) for (k,v) in base_meta_dict.items())
