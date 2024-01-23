@@ -185,11 +185,13 @@ def build():
     transfer.add_argument("--comparison", required=True,
                      help="Data to use as ground truth for TL target")
     transfer.add_argument("--dataset", nargs="*", default=None, required=True,
-                     help="Data to use in transfer learning")
+                     help="Data to use to TRAIN transfer learning")
     transfer.add_argument("--drop", nargs="*", default=None,
                      help="Data to NOT include in transfer learning (anti-globbing) (default: always includes --comparison value)")
     transfer.add_argument("--fit-quantile", type=float, default=0.8,
                      help="Dataset filtered to top-quantile performance for GC fitting (default: %(default)s)")
+    transfer.add_argument("--precomputed", default=None,
+                     help="Data to use AS results from trained transfer learning (skip GC-fitting and conditional sampling in this runtime)")
 
     inspection = prs.add_argument_group("inspection")
     inspection.add_argument("--quantile", type=float, default=0.8,
@@ -262,9 +264,13 @@ def main(args=None):
         source_dataset.append(load_csv(fname, quantile=args.fit_quantile, transform=transform_info))
     source_dataset = pd.concat(source_dataset).reset_index(drop=True)
     print(f"Loaded {len(args.dataset)} files and {len(source_dataset)} values for TL distribution")
+    if args.precomputed is None:
+        # Set up TL model
+        cond_samples, model = GC_SDV(source_dataset, args.fit_quantile, args.n_nodes, args.ranks_per_node, args.problem_x, args.problem_y, args.problem_z)
+    else:
+        cond_samples = load_csv(args.precomputed)
+        print(f"Loaded precomputed file with {len(source_dataset)} values for TL distribution")
 
-    # Set up TL model
-    cond_samples, model = GC_SDV(source_dataset, args.fit_quantile, args.n_nodes, args.ranks_per_node, args.problem_x, args.problem_y, args.problem_z)
     # Make the comparable distributions
     true_dist = make_dist(value_dict, ground_truth)
     best_dist = make_dist(value_dict, best)

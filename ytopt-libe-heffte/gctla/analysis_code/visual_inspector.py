@@ -204,8 +204,11 @@ def visualizations(frames, names, args):
             frame['index'] = frame.index
         fline = sns.lineplot(data=frame, x='index', y='GFLOPS', estimator=None, marker='+', label=name,
                              color=color, markeredgecolor=color, linestyle='--', linewidth=1)
+        ax.set_xlabel("Rank")
         if args.normalize_y:
             ax.set_ylabel("Normalized GFLOP/s")
+        else:
+            ax.set_ylabel("GFLOP/s")
         if args.flops_only:
             ax.hlines(frame['GFLOPS'].quantile(args.quantile[idx]), xmin=0, xmax=max_frame_index, color=color)
 
