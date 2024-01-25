@@ -196,6 +196,8 @@ def build():
     inspection = prs.add_argument_group("inspection")
     inspection.add_argument("--quantile", type=float, default=0.8,
                      help="Ground Truth quantile for TL to beat (deafult: %(default)s)")
+    inspection.add_argument("--skip-immediate-display", action="store_true",
+                     help="Skip interactive display (figures are always saved to disk) (default: %(default)s)")
     return prs
 
 def parse(args=None, prs=None):
@@ -339,7 +341,11 @@ def main(args=None):
         ax.set_xticklabels(options)
         ax.legend()
         fig.savefig(f"Source_Dist_{col}.png", dpi=400)
-    plt.show()
+        # Save memory
+        if args.skip_immediate_display:
+            plt.close(fig=fig)
+    if not args.skip_immediate_display:
+        plt.show()
 
 if __name__ == '__main__':
     main()
