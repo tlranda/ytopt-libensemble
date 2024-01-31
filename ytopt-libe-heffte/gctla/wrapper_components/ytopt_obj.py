@@ -43,6 +43,7 @@ def myobj(point: dict, params: list, workerID: int) -> float:
         machine_info = point.pop('machine_info')
         # Permit gpu-based mpiexec to isolate to this worker
         worker_nodefile = None
+        import os
         if 'PBS_NODEFILE' in os.environ:
             worker_nodefile = f"./worker_{workerID}_nodefile"
             with open(os.environ['PBS_NODEFILE'], 'r') as f:
@@ -71,10 +72,17 @@ def myobj(point: dict, params: list, workerID: int) -> float:
         # Machine identifier changes the proper invocation to utilize allocated resources
         # Also customize timeout based on application scale per system
         if 'polaris' in machine_info['identifier']:
+            depth_substr = "--depth {depth} --cpu-bind depth --env OMP_NUM_THREADS={depth} "
             if worker_nodefile is None:
-                machine_format_str = "mpiexec -n {mpi_ranks} --ppn {ranks_per_node} --depth {depth} --cpu-bind depth --env OMP_NUM_THREADS={depth} sh ./set_affinity_gpu_polaris.sh {interimfile}"
+                machine_format_str = "mpiexec -n {mpi_ranks} --ppn {ranks_per_node} "
+                if 'P9' in params:
+                    machine_format_str += depth_substr
+                machine_format_str += "sh ./set_affinity_gpu_polaris.sh {interimfile}"
             else:
-                machine_format_str = "mpiexec -n {mpi_ranks} --ppn {ranks_per_node} --depth {depth} --cpu-bind depth --env OMP_NUM_THREADS={depth} --hostfile "+worker_nodefile+" sh ./set_affinity_gpu_polaris.sh {interimfile}"
+                machine_format_str = "mpiexec -n {mpi_ranks} --ppn {ranks_per_node} "
+                if 'P9' in parmas:
+                    machine_format_str += depth_subtr
+                machine_format_str += "-hostfile "+worker_nodefile+" sh ./set_affinity_gpu_polaris.sh {interimfile}"
         elif 'theta' in machine_info['identifier']:
             machine_format_str = "aprun -n {mpi_ranks} -N {ranks_per_node} -cc depth -d {depth} -j {j} -e OMP_NUM_THREADS={depth} sh {interimfile}"
         else:
@@ -130,7 +138,7 @@ def myobj(point: dict, params: list, workerID: int) -> float:
         print(f"[worker {workerID} - obj] returns point {results}")
         return results
     except Exception as e:
-        bonus_context = f"point: {point} | params: {params} | workerID: {workerID} | "
+        bonus_context = f"point: {point} | params: {params} | workerID: {workerID} | workingDirectory: {os.getcwd()} "
         e.args = tuple([bonus_context+str(e.args[0])])
         raise e
 

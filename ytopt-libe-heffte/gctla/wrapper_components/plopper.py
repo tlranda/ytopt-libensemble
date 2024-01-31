@@ -87,10 +87,16 @@ class Plopper:
         #print(workerID, cmd2)
 
         #Find the execution metric
-        # Divide and promote instead of truncate
-        j = math.ceil(ranks_per_node * dictVal['P9'] / 64)
         # Command template set up in ytopt_obj.py -- this separates the need to look at what system we're on out of the plopper
-        cmd = self.cmd_template.format(mpi_ranks=mpi_ranks, ranks_per_node=ranks_per_node, depth=dictVal['P9'], j=j, interimfile=interimfile)
+        if 'P9' in dictVal.keys():
+            # Divide and promote instead of truncate
+            j = math.ceil(ranks_per_node * dictVal['P9'] / 64)
+            cmd = self.cmd_template.format(mpi_ranks=mpi_ranks, ranks_per_node=ranks_per_node, depth=dictVal['P9'], j=j, interimfile=interimfile)
+        else:
+            try:
+                cmd = self.cmd_template.format(mpi_ranks=mpi_ranks, ranks_per_node=ranks_per_node, interimfile=interimfile)
+            except:
+                raise ValueError(self.cmd_template)
         print(f"[worker {workerID} - plopper] runs: {cmd}")
 
         results = []

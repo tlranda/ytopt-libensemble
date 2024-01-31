@@ -29,10 +29,14 @@ input_space = [('Categorical',
                  'default_value': '128',
                 }
                ),
+               # Default set to -reorder as it is required for many cosine/sine backends
+               # and is also the most common default setting. HOWEVER, some backends
+               # instead default to -no-reorder (check heffte_plan_logic.{h/cpp}), such as
+               # cufft. In such cases, customize your space to edit the default appropriately
                ('Categorical',
                 {'name': 'p2',
-                 'choices': ['-no-reorder', '-reorder', ' '],
-                 'default_value': ' ',
+                 'choices': ['-no-reorder', '-reorder'],
+                 'default_value': '-reorder',
                 }
                ),
                ('Categorical',
@@ -49,20 +53,20 @@ input_space = [('Categorical',
                ),
                ('Categorical',
                 {'name': 'p5',
-                 'choices': ['-pencils', '-slabs', ' '],
-                 'default_value': ' ',
+                 'choices': ['-pencils', '-slabs'],
+                 'default_value': '-pencils',
                 }
                ),
                ('Categorical',
                 {'name': 'p6',
-                 'choices': ['-r2c_dir 0', '-r2c_dir 1', '-r2c_dir 2', ' '],
-                 'default_value': ' ',
+                 'choices': ['-r2c_dir 0', '-r2c_dir 1', '-r2c_dir 2'],
+                 'default_value': '-r2c_dir 0',
                 }
                ),
                # BELOW HERE ARE DUMMY VALUES
                # They should be overwritten by the customize_space() call based on available resources
                # p7/p8 represent topologies as space-delimited strings with integer #ranks/dim for X/Y/Z
-               # p9 represents selectable #threads as integers
+               # p9 represents selectable #threads as integers -- but only for the 'fftw' CPU backend
                # c0 represents the FFT backend selection as a string (usually 'cufft' for GPUs, 'fftw' for CPUs)
                #
                # Implementers should be able to copy this template and update these values to fit
@@ -117,6 +121,10 @@ def customize_space(self, class_size):
     self.ppn = self.ranks_per_node if 'ranks_per_node' in defined_by_self else self.plopper.ranks_per_node
     c0_value = 'cufft' if self.gpus > 0 else 'fftw'
     altered_space[12] = ('Constant', {'name': 'c0', 'value': c0_value})
+    # Set correct reordering default here
+    if c0_value in ['cufft']:
+        altered_space[ 4 ][ 1 ]['default_value'] = '-no-reorder'
+        #              ^p2  ^dict    ^edited key    ^ previous value: '-reorder'
 
     self.node_scale = self.node_count * self.ppn
     # Don't exceed #threads across total ranks
@@ -241,7 +249,7 @@ class heffte_plopper(LibE_Plopper):
         self.known_timeouts = {}
         if 'polaris' in self.machine_identifier:
             if (old_cmd_string is not None and old_cmd_string != self.cmd_template) or (old_cmd_string is None and not hasattr(self, 'cmd_template')):
-                self.cmd_template = "mpiexec -n {mpi_ranks} --ppn {ranks_per_node} --depth {depth} --cpu-bind depth --env OMP_NUM_THREADS={depth} sh ./wrapper_components/set_affinity_gpu_polaris.sh {interimfile}"
+                self.cmd_template = "mpiexec -n {mpi_ranks} --ppn {ranks_per_node} sh ./set_affinity_gpu_polaris.sh {interimfile}"
             polaris_timeouts = {(64,64,64): 10.0,
                                 (128,128,128): 10.0,
                                 (256,256,256): 10.0,

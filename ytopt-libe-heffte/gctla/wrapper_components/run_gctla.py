@@ -136,20 +136,20 @@ p1y = CSH.Constant(name='p1y', value=APP_SCALE_Y)
 p1z = CSH.Constant(name='p1z', value=APP_SCALE_Z)
 #p1 = CSH.OrdinalHyperparameter(name='p1', sequence=[64,128,256,512,1024], default_value=128)
 # arg3  reorder
-p2 = CSH.CategoricalHyperparameter(name='p2', choices=["-no-reorder", "-reorder"," "], default_value=" ")
+p2 = CSH.CategoricalHyperparameter(name='p2', choices=["-no-reorder", "-reorder"], default_value="-no-reorder" if gpu_enabled else "-reorder")
 # arg4 alltoall
 p3 = CSH.CategoricalHyperparameter(name='p3', choices=["-a2a", "-a2av", " "], default_value=" ")
 # arg5 p2p
 p4 = CSH.CategoricalHyperparameter(name='p4', choices=["-p2p", "-p2p_pl"," "], default_value=" ")
 # arg6 reshape logic
-p5 = CSH.CategoricalHyperparameter(name='p5', choices=["-pencils", "-slabs"," "], default_value=" ")
+p5 = CSH.CategoricalHyperparameter(name='p5', choices=["-pencils", "-slabs"], default_value="-pencils")
 # arg7
-p6 = CSH.CategoricalHyperparameter(name='p6', choices=["-r2c_dir 0", "-r2c_dir 1","-r2c_dir 2", " "], default_value=" ")
+p6 = CSH.CategoricalHyperparameter(name='p6', choices=["-r2c_dir 0", "-r2c_dir 1","-r2c_dir 2"], default_value="-r2c_dir 0")
 
 # Cross-architecture is out-of-scope for now so we determine this for the current platform and leave it at that
 cpu_override = None
 gpu_override = None
-cpu_ranks_per_node = 1
+cpu_ranks_per_node = None
 
 c0 = CSH.Constant('c0', value='cufft' if gpu_enabled else 'fftw')
 
@@ -240,10 +240,17 @@ default_topology, topologies = minSurfaceSplit(APP_SCALE_X, APP_SCALE_Y, APP_SCA
 p7 = CSH.CategoricalHyperparameter(name='p7', choices=topologies, default_value=default_topology)
 # arg9
 p8 = CSH.CategoricalHyperparameter(name='p8', choices=topologies, default_value=default_topology)
-# number of threads is hardware-dependent
-p9 = CSH.OrdinalHyperparameter(name='p9', sequence=sequence, default_value=max_depth)
+# number of threads is hardware-dependent, but only for fftw backend
+if c0.value == 'fftw':
+    p9 = CSH.OrdinalHyperparameter(name='p9', sequence=sequence, default_value=max_depth)
+else:
+    p9 = None
 
-cs.add_hyperparameters([p0, p1x, p1y, p1z, p2, p3, p4, p5, p6, p7, p8, p9, c0])
+hyperparameter_space = [p0,p1x,p1y,p1z,p2,p3,p4,p5,p6,p7,p8]
+if p9 is not None:
+    hyperparameter_space.append(p9)
+hyperparameter_space.append(c0)
+cs.add_hyperparameters(hyperparameter_space)
 
 MACHINE_IDENTIFIER = "tbd"
 print(f"Identifying machine as {MACHINE_IDENTIFIER}"+"\n")
@@ -510,7 +517,7 @@ for simulatorID in range(2, 2+num_sim_workers):
 # Declare the sim_f to be optimized, and the input/outputs
 sim_specs = {
     'sim_f': init_obj,
-    'in': ['p0','p1x','p1y','p1z'] + [f'p{_}' for _ in range(2,10)] + ['c0'],
+    'in': ['p0','p1x','p1y','p1z'] + [f'p{_}' for _ in range(2,10 if c0.value == 'fftw' else 9)] + ['c0'],
     'out': [('FLOPS', float, (1,)),
             ('elapsed_sec', float, (1,)),
             ('machine_identifier','<U30', (1,)),
@@ -543,7 +550,6 @@ gen_specs = {
             ('p6', "<U24", (1,)),
             ('p7', "<U24", (1,)),
             ('p8', "<U24", (1,)),
-            ('p9', int, (1,)),
             ],
     'persis_in': sim_specs['in'] +\
                  ['FLOPS', 'elapsed_sec'] +\
@@ -561,6 +567,8 @@ gen_specs = {
         'ensemble_dir': libE_specs['ensemble_dir_path'],
     },
 }
+if c0.value == 'fftw':
+    gen_specs['out'].append(('p9', int, (1,)))
 
 alloc_specs = {
     'alloc_f': alloc_f,
