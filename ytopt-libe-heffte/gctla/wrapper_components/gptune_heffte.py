@@ -120,7 +120,7 @@ def csvs_to_gptune(fnames, tuning_metadata, topologies):
             parameters = [_ for _ in csv.columns if (_.startswith('p') or _.startswith('c')) and _ != 'predicted']
         prev_worker_time = {}
         # Prepare topology conversion
-        local_maxdepth = np.log2(np.prod(np.asarray(csv.loc[0,'p7'].split(' ')).astype(int)))
+        local_maxdepth = np.log2(np.prod(np.asarray(csv.loc[0,'p6'].split(' ')).astype(int)))
         for index, row in csv.iterrows():
             new_eval = dict((k,v) for (k,v) in func_template.items())
             new_eval['task_parameter'] = {'mpi_ranks': row['mpi_ranks'],
@@ -133,7 +133,7 @@ def csvs_to_gptune(fnames, tuning_metadata, topologies):
             new_eval['tuning_parameter'] = dict((col, str(row[col])) for col in parameters)
             # P7-8 may require topology reclassification
             if local_maxdepth != maxdepth:
-                for key in ['p7','p8']:
+                for key in ['p6','p7']:
                     keylocal = np.asarray(new_eval['tuning_parameter'][key].split(' ')).astype(int)
                     projected = 2 ** (np.log2(keylocal) / local_maxdepth * maxdepth)
                     distances = ((np_topologies - projected) ** 2).sum(axis=1)
@@ -228,15 +228,13 @@ def main(args=None, prs=None):
     p1z = CSH.Constant(name='p1z', value=APP_SCALE_Z)
     #p1 = CSH.OrdinalHyperparameter(name='p1', sequence=[64,128,256,512,1024], default_value=128)
     # arg3  reorder
-    p2 = CSH.CategoricalHyperparameter(name='p2', choices=["-no-reorder", "-reorder"," "], default_value=" ")
-    # arg4 alltoall
-    p3 = CSH.CategoricalHyperparameter(name='p3', choices=["-a2a", "-a2av", " "], default_value=" ")
-    # arg5 p2p
-    p4 = CSH.CategoricalHyperparameter(name='p4', choices=["-p2p", "-p2p_pl"," "], default_value=" ")
-    # arg6 reshape logic
-    p5 = CSH.CategoricalHyperparameter(name='p5', choices=["-pencils", "-slabs"," "], default_value=" ")
-    # arg7
-    p6 = CSH.CategoricalHyperparameter(name='p6', choices=["-r2c_dir 0", "-r2c_dir 1","-r2c_dir 2", " "], default_value=" ")
+    p2 = CSH.CategoricalHyperparameter(name='p2', choices=["-no-reorder", "-reorder"], default_value="-reorder")
+    # arg4 communication
+    p3 = CSH.CategoricalHyperparameter(name='p3', choices=["-a2a", "-a2av", "-p2p", "-p2p_pl"], default_value="-a2av")
+    # arg5 reshape logic
+    p4 = CSH.CategoricalHyperparameter(name='p4', choices=["-pencils", "-slabs"], default_value="-pencils")
+    # arg6 reduction dimension
+    p5 = CSH.CategoricalHyperparameter(name='p5', choices=["-r2c_dir 0", "-r2c_dir 1","-r2c_dir 2"], default_value="-r2c_dir 0")
 
     # Cross-architecture is out-of-scope for now so we determine this for the current platform and leave it at that
     # This is where overrides would be set in run_gctla, etc, but they're just arguments for GPTune
@@ -299,20 +297,17 @@ def main(args=None, prs=None):
         sequence = sorted(sequence+[max_depth])
     print(f"Depths are based on {threads_per_node} threads on each node, shared across {ranks_per_node} MPI ranks on each node")
     print(f"Selectable depths are: {sequence}"+"\n")
-    # arg10 number threads per MPI process
-    #p9 = CSH.OrdinalHyperparameter(name='p9', sequence=sequence, default_value=max_depth)
 
     # Minimum surface splitting solve is used as the default topology for FFT (picked by heFFTe when in-grid and/or out-grid topology == ' ')
     default_topology, topologies = minSurfaceSplit(APP_SCALE_X, APP_SCALE_Y, APP_SCALE_Z, MPI_RANKS)
 
-    # arg8
+    # arg7-8 topologies
+    p6 = CSH.CategoricalHyperparameter(name='p6', choices=topologies, default_value=default_topology)
     p7 = CSH.CategoricalHyperparameter(name='p7', choices=topologies, default_value=default_topology)
-    # arg9
-    p8 = CSH.CategoricalHyperparameter(name='p8', choices=topologies, default_value=default_topology)
     # number of threads is hardware-dependent
     # GPTune needs these to be strings
-    p9 = CSH.OrdinalHyperparameter(name='p9', sequence=[str(_) for _ in sequence], default_value=str(max_depth))
-    cs.add_hyperparameters([p0, p1x, p1y, p1z, p2, p3, p4, p5, p6, p7, p8, p9, c0])
+    p8 = CSH.OrdinalHyperparameter(name='p8', sequence=[str(_) for _ in sequence], default_value=str(max_depth))
+    cs.add_hyperparameters([p0, p1x, p1y, p1z, p2, p3, p4, p5, p6, p7, p8, c0])
     MACHINE_IDENTIFIER = SYSTEM
 
     # Create a problem instance

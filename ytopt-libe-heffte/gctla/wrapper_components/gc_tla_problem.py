@@ -41,37 +41,37 @@ input_space = [('Categorical',
                ),
                ('Categorical',
                 {'name': 'p3',
-                 'choices': ['-a2a', '-a2av', ' '],
-                 'default_value': ' ',
+                 'choices': ['-a2a', '-a2av', '-p2p', '-p2p_pl'],
+                 'default_value': '-a2av',
                 }
                ),
                ('Categorical',
                 {'name': 'p4',
-                 'choices': ['-p2p', '-p2p_pl', ' '],
-                 'default_value': ' ',
-                }
-               ),
-               ('Categorical',
-                {'name': 'p5',
                  'choices': ['-pencils', '-slabs'],
                  'default_value': '-pencils',
                 }
                ),
                ('Categorical',
-                {'name': 'p6',
+                {'name': 'p5',
                  'choices': ['-r2c_dir 0', '-r2c_dir 1', '-r2c_dir 2'],
                  'default_value': '-r2c_dir 0',
                 }
                ),
                # BELOW HERE ARE DUMMY VALUES
                # They should be overwritten by the customize_space() call based on available resources
-               # p7/p8 represent topologies as space-delimited strings with integer #ranks/dim for X/Y/Z
-               # p9 represents selectable #threads as integers -- but only for the 'fftw' CPU backend
+               # p6/p7 represent topologies as space-delimited strings with integer #ranks/dim for X/Y/Z
+               # p8 represents selectable #threads as integers -- but only for the 'fftw' CPU backend
                # c0 represents the FFT backend selection as a string (usually 'cufft' for GPUs, 'fftw' for CPUs)
                #
                # Implementers should be able to copy this template and update these values to fit
                # the actual tuning space. Any instantiated object's space should be updated via a
                # call to its plopper.set_architecture_info() and set_space() functions
+               ('Categorical',
+                {'name': 'p6',
+                 'choices': ['1 1 1'],
+                 'default_value': '1 1 1',
+                }
+               ),
                ('Categorical',
                 {'name': 'p7',
                  'choices': ['1 1 1'],
@@ -80,12 +80,6 @@ input_space = [('Categorical',
                ),
                ('Categorical',
                 {'name': 'p8',
-                 'choices': ['1 1 1'],
-                 'default_value': '1 1 1',
-                }
-               ),
-               ('Categorical',
-                {'name': 'p9',
                  'choices': [1],
                  'default_value': 1,
                 }
@@ -120,7 +114,7 @@ def customize_space(self, class_size):
     self.gpus = self.gpus if 'gpus' in defined_by_self else self.plopper.gpus
     self.ppn = self.ranks_per_node if 'ranks_per_node' in defined_by_self else self.plopper.ranks_per_node
     c0_value = 'cufft' if self.gpus > 0 else 'fftw'
-    altered_space[12] = ('Constant', {'name': 'c0', 'value': c0_value})
+    altered_space[11] = ('Constant', {'name': 'c0', 'value': c0_value})
     # Set correct reordering default here
     if c0_value in ['cufft']:
         altered_space[ 4 ][ 1 ]['default_value'] = '-no-reorder'
@@ -214,7 +208,7 @@ class heffte_plopper(LibE_Plopper):
         super().__init__(*args, **kwargs)
         # Bash these values with a hammer its ok
         self.evaluation_tries = 1
-        self.topology_keymap = {'P7': '-ingrid', 'P8': '-outgrid'}
+        self.topology_keymap = {'P6': '-ingrid', 'P7': '-outgrid'}
         self.topology_cache = TopologyCache()
 
     def gpu_cleanup(self, outfile, attempt, dictVal, *args, **kwargs):
@@ -288,15 +282,15 @@ class heffte_plopper(LibE_Plopper):
             if type(v) is np.ndarray and v.shape == ():
                 v = v.tolist()
             # Insert -ingrid/-outgrid flags
-            if p == 'P7':
+            if p == 'P6':
                 v = '-ingrid '+v
-            elif p == 'P8':
+            elif p == 'P7':
                 v = '-outgrid '+v
             dictVal[p] = v
         # Machine info should be available via kwargs['extrakeys']['machine_info']
         dictVal.setdefault('machine_info', kwargs['extrakeys']['machine_info'])
         machine_info = dictVal['machine_info']
-        xyz = (int(dictVal['P1X']), int(dictVal['P1Y']), int(dictVal['P1Z']))
+        xyz = tuple(int(dictVal[f'P1{LETTER}']) for LETTER in "XYZ")
         if xyz in self.known_timeouts.keys():
             dictVal['machine_info']['app_timeout'] = self.known_timeouts[xyz]
             machine_info['app_timeout'] = self.known_timeouts[xyz]

@@ -88,10 +88,10 @@ class Plopper:
 
         #Find the execution metric
         # Command template set up in ytopt_obj.py -- this separates the need to look at what system we're on out of the plopper
-        if 'P9' in dictVal.keys():
+        if 'P8' in dictVal.keys():
             # Divide and promote instead of truncate
-            j = math.ceil(ranks_per_node * dictVal['P9'] / 64)
-            cmd = self.cmd_template.format(mpi_ranks=mpi_ranks, ranks_per_node=ranks_per_node, depth=dictVal['P9'], j=j, interimfile=interimfile)
+            j = math.ceil(ranks_per_node * dictVal['P8'] / 64)
+            cmd = self.cmd_template.format(mpi_ranks=mpi_ranks, ranks_per_node=ranks_per_node, depth=dictVal['P8'], j=j, interimfile=interimfile)
         else:
             try:
                 cmd = self.cmd_template.format(mpi_ranks=mpi_ranks, ranks_per_node=ranks_per_node, interimfile=interimfile)

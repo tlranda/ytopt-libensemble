@@ -137,14 +137,12 @@ p1z = CSH.Constant(name='p1z', value=APP_SCALE_Z)
 #p1 = CSH.OrdinalHyperparameter(name='p1', sequence=[64,128,256,512,1024], default_value=128)
 # arg3  reorder
 p2 = CSH.CategoricalHyperparameter(name='p2', choices=["-no-reorder", "-reorder"], default_value="-no-reorder" if gpu_enabled else "-reorder")
-# arg4 alltoall
-p3 = CSH.CategoricalHyperparameter(name='p3', choices=["-a2a", "-a2av", " "], default_value=" ")
-# arg5 p2p
-p4 = CSH.CategoricalHyperparameter(name='p4', choices=["-p2p", "-p2p_pl"," "], default_value=" ")
-# arg6 reshape logic
-p5 = CSH.CategoricalHyperparameter(name='p5', choices=["-pencils", "-slabs"], default_value="-pencils")
-# arg7
-p6 = CSH.CategoricalHyperparameter(name='p6', choices=["-r2c_dir 0", "-r2c_dir 1","-r2c_dir 2"], default_value="-r2c_dir 0")
+# arg4 communication
+p3 = CSH.CategoricalHyperparameter(name='p3', choices=["-a2a", "-a2av", "-p2p", "-p2p_pl"], default_value="-a2av")
+# arg5 reshape logic
+p4 = CSH.CategoricalHyperparameter(name='p4', choices=["-pencils", "-slabs"], default_value="-pencils")
+# arg6
+p5 = CSH.CategoricalHyperparameter(name='p5', choices=["-r2c_dir 0", "-r2c_dir 1","-r2c_dir 2"], default_value="-r2c_dir 0")
 
 # Cross-architecture is out-of-scope for now so we determine this for the current platform and leave it at that
 cpu_override = None
@@ -236,19 +234,18 @@ def minSurfaceSplit(X, Y, Z, procs):
     return best_grid, list(reversed(topologies))
 default_topology, topologies = minSurfaceSplit(APP_SCALE_X, APP_SCALE_Y, APP_SCALE_Z, MPI_RANKS)
 
-# arg8
+# arg7-8
+p6 = CSH.CategoricalHyperparameter(name='p6', choices=topologies, default_value=default_topology)
 p7 = CSH.CategoricalHyperparameter(name='p7', choices=topologies, default_value=default_topology)
-# arg9
-p8 = CSH.CategoricalHyperparameter(name='p8', choices=topologies, default_value=default_topology)
 # number of threads is hardware-dependent, but only for fftw backend
 if c0.value == 'fftw':
-    p9 = CSH.OrdinalHyperparameter(name='p9', sequence=sequence, default_value=max_depth)
+    p8 = CSH.OrdinalHyperparameter(name='p8', sequence=sequence, default_value=max_depth)
 else:
-    p9 = None
+    p8 = None
 
-hyperparameter_space = [p0,p1x,p1y,p1z,p2,p3,p4,p5,p6,p7,p8]
-if p9 is not None:
-    hyperparameter_space.append(p9)
+hyperparameter_space = [p0,p1x,p1y,p1z,p2,p3,p4,p5,p6,p7]
+if p8 is not None:
+    hyperparameter_space.append(p8)
 hyperparameter_space.append(c0)
 cs.add_hyperparameters(hyperparameter_space)
 
@@ -358,13 +355,13 @@ print(f"GC will be fitted against data from: {data_files}")
 data = pd.concat([pd.read_csv(_) for _ in data_files]).reset_index(names=["CSV_Order"])
 # Load relevant training data
 trim_cols = ['c0','p0','p1x','p1y','p1z']
-trim_cols += [f'p{_}' for _ in range(2,10)]
+trim_cols += [f'p{_}' for _ in range(2,8 if p8 is None else 9)]
 trim_cols += ['mpi_ranks', 'threads_per_node', 'ranks_per_node', 'FLOPS']
 data_trimmed = data.loc[:, trim_cols]
 # Recontextualize rank-specific loaded data
 splitter = lambda x: [int(_) for _ in x.split(' ')]
 np_topologies = np.asarray([np.fromstring(_, dtype=int, sep=' ') for _ in topologies])
-for topology_key in ['p7','p8']:
+for topology_key in ['p6','p7']:
     # Grab the strings, convert to 3D integer topologies, then represent their logarithm
     top_as_np_log = np.log2(np.vstack(data_trimmed[topology_key].apply(splitter)))
     # Get corresponding MAXIMUM logarithm for each dimension/row
@@ -381,30 +378,31 @@ for topology_key in ['p7','p8']:
     data_trimmed[topology_key] = str_topo
 
 # Recontextualize sequence data
-for sequence_key in ['p9']:
-    # Must group by values
-    dest_seq = np.asarray(sequence)
-    for ((t,r), subframe) in data_trimmed.groupby(['threads_per_node','ranks_per_node']):
-        max_select = t // r
-        cur_vals = subframe[sequence_key]
-        # Reconstruct available sequence
-        cur_seq = [2**_ for _ in range(1,10) if (2**_) <= max_select]
-        if len(cur_seq) >= 2:
-            intermediates = []
-            prevpow = cur_seq[1]
-            for rawpow in cur_seq[2:]:
-                if rawpow+prevpow >= max_select:
-                    break
-                intermediates.append(rawpow+prevpow)
-                prevpow = rawpow
-            cur_seq = sorted(intermediates + cur_seq)
-        if max_select not in cur_seq:
-            cur_seq += [max_select]
-        cur_seq = np.asarray(cur_seq)
-        # Project values into ratios
-        projection = np.asarray([np.argmax((cur_seq == c)) for c in cur_vals]) / len(cur_seq) * len(dest_seq)
-        projection = dest_seq[projection.round(0).astype(int)]
-        data_trimmed.loc[subframe.index, sequence_key] = projection
+if p8 is not None:
+    for sequence_key in ['p8']:
+        # Must group by values
+        dest_seq = np.asarray(sequence)
+        for ((t,r), subframe) in data_trimmed.groupby(['threads_per_node','ranks_per_node']):
+            max_select = t // r
+            cur_vals = subframe[sequence_key]
+            # Reconstruct available sequence
+            cur_seq = [2**_ for _ in range(1,10) if (2**_) <= max_select]
+            if len(cur_seq) >= 2:
+                intermediates = []
+                prevpow = cur_seq[1]
+                for rawpow in cur_seq[2:]:
+                    if rawpow+prevpow >= max_select:
+                        break
+                    intermediates.append(rawpow+prevpow)
+                    prevpow = rawpow
+                cur_seq = sorted(intermediates + cur_seq)
+            if max_select not in cur_seq:
+                cur_seq += [max_select]
+            cur_seq = np.asarray(cur_seq)
+            # Project values into ratios
+            projection = np.asarray([np.argmax((cur_seq == c)) for c in cur_vals]) / len(cur_seq) * len(dest_seq)
+            projection = dest_seq[projection.round(0).astype(int)]
+            data_trimmed.loc[subframe.index, sequence_key] = projection
 # Drop configurations that had errors (not runtime failures); indicated by FLOPS >= 2.0
 data_trimmed = data_trimmed[data_trimmed['FLOPS'] < 2.0]
 metadata = SingleTableMetadata()
@@ -517,7 +515,7 @@ for simulatorID in range(2, 2+num_sim_workers):
 # Declare the sim_f to be optimized, and the input/outputs
 sim_specs = {
     'sim_f': init_obj,
-    'in': ['p0','p1x','p1y','p1z'] + [f'p{_}' for _ in range(2,10 if c0.value == 'fftw' else 9)] + ['c0'],
+    'in': ['p0','p1x','p1y','p1z'] + [f'p{_}' for _ in range(2,9 if c0.value == 'fftw' else 8)] + ['c0'],
     'out': [('FLOPS', float, (1,)),
             ('elapsed_sec', float, (1,)),
             ('machine_identifier','<U30', (1,)),
@@ -549,7 +547,6 @@ gen_specs = {
             ('p5', "<U24", (1,)),
             ('p6', "<U24", (1,)),
             ('p7', "<U24", (1,)),
-            ('p8', "<U24", (1,)),
             ],
     'persis_in': sim_specs['in'] +\
                  ['FLOPS', 'elapsed_sec'] +\
@@ -568,7 +565,7 @@ gen_specs = {
     },
 }
 if c0.value == 'fftw':
-    gen_specs['out'].append(('p9', int, (1,)))
+    gen_specs['out'].append(('p8', int, (1,)))
 
 alloc_specs = {
     'alloc_f': alloc_f,

@@ -75,12 +75,12 @@ def myobj(point: dict, params: list, workerID: int) -> float:
             depth_substr = "--depth {depth} --cpu-bind depth --env OMP_NUM_THREADS={depth} "
             if worker_nodefile is None:
                 machine_format_str = "mpiexec -n {mpi_ranks} --ppn {ranks_per_node} "
-                if 'P9' in params:
+                if 'P8' in params:
                     machine_format_str += depth_substr
                 machine_format_str += "sh ./set_affinity_gpu_polaris.sh {interimfile}"
             else:
                 machine_format_str = "mpiexec -n {mpi_ranks} --ppn {ranks_per_node} "
-                if 'P9' in params:
+                if 'P8' in params:
                     machine_format_str += depth_subtr
                 machine_format_str += "-hostfile "+worker_nodefile+" sh ./set_affinity_gpu_polaris.sh {interimfile}"
         elif 'theta' in machine_info['identifier']:
@@ -123,9 +123,10 @@ def myobj(point: dict, params: list, workerID: int) -> float:
         obj = Plopper(plopper_template, './', machine_format_str)
         values = [point[param] for param in params]
         # Fix topology
-        values[9] = f"-ingrid {values[9]}"
-        values[10] = f"-outgrid {values[10]}"
-        os.environ["OMP_NUM_THREADS"] = str(values[9])
+        values[8] = f"-ingrid {values[8]}"
+        values[9] = f"-outgrid {values[9]}"
+        if 'p8' in params:
+            os.environ["OMP_NUM_THREADS"] = str(values[10])
         params = [i.upper() for i in params]
         results = obj.findRuntime(values, params, workerID,
                                   machine_info['libE_workers'],
