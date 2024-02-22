@@ -80,7 +80,7 @@ def myobj(point: dict, params: list, workerID: int) -> float:
                 machine_format_str += "sh ./set_affinity_gpu_polaris.sh {interimfile}"
             else:
                 machine_format_str = "mpiexec -n {mpi_ranks} --ppn {ranks_per_node} "
-                if 'P9' in parmas:
+                if 'P9' in params:
                     machine_format_str += depth_subtr
                 machine_format_str += "-hostfile "+worker_nodefile+" sh ./set_affinity_gpu_polaris.sh {interimfile}"
         elif 'theta' in machine_info['identifier']:
