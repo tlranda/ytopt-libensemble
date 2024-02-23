@@ -99,7 +99,7 @@ class LibeJobInfo(JobInfo):
                         "--system polaris "+\
                         "--mpi-ranks {n_ranks} "+\
                         "--gpu-override 4 --gpu-enabled "+\
-                        "--application-scale-x {app_scale[0]} --application-scale-y {app_scale[1]} --application-scale-z {app_scale[2]} "+\
+                        "--application-x {app_scale[0]} --application-y {app_scale[1]} --application-z {app_scale[2]} "+\
                         "--ensemble-workers {workers} --max-evals {n_records} "+\
                         "--configure-environment craympi "+\
                         "--machine-identifier polarisSlingshot11 "+\
@@ -157,7 +157,7 @@ def build():
     prs.add_argument('--job-type', choices=['sleep','libE'], default='libE', help="Identify what kinds of jobs are described by --description (default: %(default)s)")
     prs.add_argument('--max-nodes', type=int, required=True, help="Maximum nodes in parallel")
     prs.add_argument('--n-records', type=int, required=True, help="Number of records required for each item in description list")
-    prs.add_argument('--ranks-per-node', type=int, default=64, help="MPI rank expansion factor (default: %(default)s)")
+    prs.add_argument('--ranks-per-node', type=int, default=4, help="MPI rank expansion factor (default: %(default)s)")
     prs.add_argument('--max-workers', type=int, default=4, help="Max LibE workers (will be reduced for larger node jobs automatically; default: %(default)s)")
     prs.add_argument('--sleep', type=int, default=60, help="Sleep period (in seconds) before checking to start up more jobs (default: %(default)s)")
     prs.add_argument('--demo', action='store_true', help="Operate in demo mode (only echo jobs commands)")
@@ -215,6 +215,7 @@ def parse(args=None, prs=None):
     return args
 
 def execute_job(job_obj, args):
+    print(f"Execute job: {job_obj.specName()}")
     # Pre job
     if hasattr(job_obj, 'prelaunch'):
         n_prelaunch = len(job_obj.prelaunch)
