@@ -237,7 +237,9 @@ def execute_job(job_obj, args):
         print("DEMO -- no job launch")
         new_sub = pretend_subprocess(command_split)
     else:
-        new_sub = subprocess.Popen(command_split)
+        fout = open("parallel_job.output","w")
+        ferr = open("parallel_job.error","w")
+        new_sub = subprocess.Popen(command_split, stdout=fout, stderr=ferr)
     # Post launch
     if hasattr(job_obj, 'postlaunch'):
         n_postlaunch = len(job_obj.postlaunch)
