@@ -123,7 +123,7 @@ p3 = CSH.CategoricalHyperparameter(name='p3', choices=["-a2a", "-a2av", "-p2p", 
 # arg5 reshape logic
 p4 = CSH.CategoricalHyperparameter(name='p4', choices=["-pencils", "-slabs"], default_value="-pencils")
 # arg5 reduction dimension
-p4 = CSH.CategoricalHyperparameter(name='p5', choices=["-r2c_dir 0", "-r2c_dir 1","-r2c_dir 2"], default_value="-r2c_dir 0")
+p5 = CSH.CategoricalHyperparameter(name='p5', choices=["-r2c_dir 0", "-r2c_dir 1","-r2c_dir 2"], default_value="-r2c_dir 0")
 
 # Cross-architecture is out-of-scope for now so we determine this for the current platform and leave it at that
 cpu_override = None
