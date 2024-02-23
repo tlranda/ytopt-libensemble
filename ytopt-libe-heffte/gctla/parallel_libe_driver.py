@@ -121,7 +121,7 @@ class LibeJobInfo(JobInfo):
     def __init__(self, spec, n_nodes, n_ranks, app_scale, workers, n_records, resume):
         self.overrideSelfAttrs()
     def nodes(self):
-        return self.n_nodes * self.workers
+        return int(self.n_nodes) * self.workers
 
 class SleepJobInfo(JobInfo):
     basic_job_string = "sleep {duration}"
@@ -184,12 +184,12 @@ def parse(args=None, prs=None):
                 matches = re.match(r"(.*)_([0-9]+)n_([0-9]+)_([0-9]+)_([0-9]+)a", dirname).groups(0)
                 system, n_nodes, *app_scale = matches
                 # n_nodes convert to int so we can ensure job oversubscription doesn't occur
-                n_nodes = int(n_nodes)
+                int_nodes = int(n_nodes)
                 # Reject if never runnable
-                if n_nodes > args.max_nodes:
-                    print(f"REJECT spec (Requested nodes {n_nodes} > Max nodes {args.max_nodes}) in {args.description}:{line_idx} \"{line}\"")
+                if int_nodes > args.max_nodes:
+                    print(f"REJECT spec (Requested nodes {int_nodes} > Max nodes {args.max_nodes}) in {args.description}:{line_idx} \"{line}\"")
                     continue
-                n_ranks = n_nodes * args.ranks_per_node
+                n_ranks = int_nodes * args.ranks_per_node
                 # Check if there are any existing results to extend
                 manager_handle = search_path.joinpath('manager_results.csv')
                 if manager_handle.exists():
@@ -206,7 +206,7 @@ def parse(args=None, prs=None):
                         continue
                 else:
                     workers = 1
-                    while workers < args.max_workers and n_nodes * workers < args.max_nodes:
+                    while workers < args.max_workers and int_nodes * workers < args.max_nodes:
                         workers += 1
                     args.jobs.append(
                         LibeJobInfo(line, n_nodes, n_ranks, app_scale, workers, args.n_records, manager_handle)
