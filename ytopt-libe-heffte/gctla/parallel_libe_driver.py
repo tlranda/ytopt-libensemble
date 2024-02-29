@@ -49,6 +49,58 @@ class SetWhenDefined():
         for (k,v) in values.items():
             setattr(self, k, v)
 
+class NodeFileManager():
+    def __init__(self):
+        self.node_list = []
+        if 'PBS_NODEFILE' in os.environ:
+            with open(os.environ['PBS_NODEFILE'],'r') as nodefile:
+                self.node_list = [_.rstrip() for _ in nodefile.readlines()]
+        self.node_list = np.asarray(self.node_list)
+        self.n_nodes = self.node_list.shape[0]
+        self.allocated = np.full((self.n_nodes), False, dtype=bool)
+        self.tags = dict()
+
+    def reserve_nodes(self, n_nodes, tag):
+        if type(n_nodes) is str:
+            n_nodes = int(n_nodes)
+        # Special case : No nodes are ever reserved
+        if self.n_nodes == 0:
+            self.tags[tag] = {'file': None, 'indices': []}
+            return
+
+        assert n_nodes <= (~self.allocated).sum(), f"Allocation request for {n_nodes} exceeds free capacity: {(~self.allocated).sum()}/{self.allocated.shape[0]}"
+        # Select unallocated nodes to reserve
+        allocation = np.nonzero(~self.allocated)[0][:n_nodes]
+        self.allocated[allocation] = True
+        # Create uniquely named allocation file
+        allocation_name = pathlib.Path("nodelist.txt")
+        i = 1
+        while allocation_name.exists():
+            allocation_name = allocation_name.with_stem(f"nodelist_{i}")
+            i += 1
+        allocation_name.touch()
+        with open(allocation_name,'w') as nodefile:
+            nodefile.write("\n".join(self.node_list[allocation]))
+        # Save information for future reference under the tag
+        self.tags[tag] = {'file': allocation_name,
+                          'indices': allocation}
+
+    def free_nodes(self, tag):
+        assert tag in self.tags, f"Tag '{tag}' not found in list of known tags: {sorted(self.tags.keys())}"
+        # De-allocate nodes and free the tag
+        # Because we set indicies == empty list when not managing nodes, this operation doesn't need
+        # to be guarded against that case
+        self.allocated[self.tags[tag]['indices']] = False
+        del self.tags[tag]
+
+    def modify_job_string(self, job_string, tag):
+        assert tag in self.tags, f"Tag '{tag}' not found in list of known tags: {sorted(self.tags.keys())}"
+        if len(self.tags[tag]['indices']) > 0:
+            job_string += f" --node-list-file {self.tags[tag]['file']}"
+        return job_string
+# GLOBAL MANAGER FOR NODE LISTS
+NodeListMaker = NodeFileManager()
+
 def NoOp(*args,**kwargs):
     pass
 
@@ -60,41 +112,90 @@ class PythonEval():
         self.kwargs = kwargs
         for (attr, value) in other_attrs.items():
             setattr(self, attr, value)
-    def __repr__(self):
-        return f"Calls {self.func} with unformatted args: {self.args} and unformatted kwargs: {self.kwargs}"
-    def __call__(self, job):
+    def __str__(self):
+        return f"Calls {self.func} with:"+\
+                "\n\targs:\n\t\t"+"\n\t\t".join([str(_) for _ in self.args])+\
+                "\n\tkwargs:\n\t\t"+"\n\t\t".join([f"Key: '{k}'; Value: '{v}'" for (k,v) in self.kwargs.items()])
+    def make_args(self, job):
         new_args = []
         for attr in self.args:
-            new_args.append(attr.format(**job.__dict__))
+            if hasattr(attr, 'format') and callable(getattr(attr,'format')):
+                attr = attr.format(**job.__dict__)
+            new_args.append(attr)
         new_kwargs = {}
         for key, val in self.kwargs.items():
-            new_kwargs[key] = val.format(**job.__dict__)
+            if hasattr(val, 'format') and callable(getattr(val,'format')):
+                val = val.format(**job.__dict__)
+            new_kwargs[key] = val
+        return new_args, new_kwargs
+    def __call__(self, job):
+        new_args, new_kwargs = self.make_args(job)
         self.func(*new_args, **new_kwargs)
 
 # Format the shell command based on own attributes and track # of occupied nodes by the job
 class JobInfo(SetWhenDefined):
     basic_job_string = ""
-    def __repr__(self):
+    prelaunch_tasks = []
+    postlaunch_tasks = []
+    finalize_tasks = []
+    def __str__(self):
         return self.basic_job_string.format(**self.__dict__)
     def shortName(self):
         except_spec = dict((k,v) for (k,v) in self.__dict__.items() if not k.startswith('_') and k not in ['spec'])
         return str(except_spec)
     def specName(self):
         return self.spec
-    def format(self):
-        return shlex.split(str(self))
     def nodes(self):
         pass
+    def process_cmd_queue(self, queue, identifier):
+        n_queued = len(queue)
+        if n_queued == 0:
+            print(f"{identifier} -- Nothing to do!")
+        for idx, cmd in enumerate(queue):
+            if type(cmd) is str:
+                command_split = shlex.split(cmd.format(**self.__dict__))
+                print(f"{identifier} command {idx+1}/{n_queued}: {command_split}")
+                new_sub = subprocess.Popen(command_split)
+                retcode = new_sub.wait()
+                if retcode != 0:
+                    raise ValueError("Command failed")
+            elif isinstance(cmd, PythonEval):
+                print(f"{identifier} Python command {idx+1}/{n_queued}: {cmd}")
+                cmd(self)
+    def prelaunch(self):
+        self.process_cmd_queue(self.prelaunch_tasks, "Pre-launch")
+    def format(self):
+        return shlex.split(str(self))
+    def postlaunch(self):
+        self.process_cmd_queue(self.postlaunch_tasks, "Post-launch")
+    def finalize(self):
+        self.process_cmd_queue(self.finalize_tasks, "Finalize")
+    def update_tasks(self, prelaunch, postlaunch, finalize):
+        if prelaunch is not None:
+            self.prelaunch_tasks = prelaunch
+        if postlaunch is not None:
+            self.postlaunch_tasks = postlaunch
+        if finalize is not None:
+            self.finalize_tasks = finalize
 
-class LibeJobInfo(JobInfo):
-    prelaunch = ["mkdir -p polarisSlingshot11_{n_nodes}n_{app_scale[0]}_{app_scale[1]}_{app_scale[2]}a",
-                 PythonEval(func=os.chdir,
-                            args=("polarisSlingshot11_{n_nodes}n_{app_scale[0]}_{app_scale[1]}_{app_scale[2]}a",)),
-                 "ln -s ../wrapper_components/ wrapper_components",
-                 "ln -s ../libEwrapper.py libEwrapper.py",
-                 "touch __init__.py"]
-    postlaunch = [PythonEval(func=os.chdir, args=("..",))]
-    # Polaris system : Collecting new datasets
+class MutableJobInfo(JobInfo):
+    def mutate_basic_job_string(self, _callable, *args, **kwargs):
+        self.basic_job_string = _callable(*args, **kwargs)
+
+# These tasks will be placed into the LibeJobInfo instances below, but have to wait for class instances to finalize
+libE_dirname = "polarisSlingshot11_{n_nodes}n_{app_scale[0]}_{app_scale[1]}_{app_scale[2]}a"
+libE_prelaunch_tasks = ["mkdir -p "+libE_dirname,
+                   PythonEval(func=os.chdir,
+                              args=(libE_dirname,)),
+                   PythonEval(func=NodeListMaker.reserve_nodes,
+                              args=("{n_nodes}", libE_dirname)),
+                   None, # Will be replaced when instantiated
+                   "ln -s ../wrapper_components/ wrapper_components",
+                   "ln -s ../libEwrapper.py libEwrapper.py",
+                   "touch __init__.py"]
+libE_postlaunch_tasks = [PythonEval(func=os.chdir, args=("..",)),]
+libE_finalize_tasks = [PythonEval(func=NodeListMaker.free_nodes, args=(libE_dirname,)),]
+class LibeJobInfo(MutableJobInfo):
     basic_job_string = "python3 libEwrapper.py "+\
                         "--system polaris "+\
                         "--mpi-ranks {n_ranks} "+\
@@ -118,6 +219,7 @@ class LibeJobInfo(JobInfo):
                        "--ens-dir-path Theta_Extend_{n_nodes}n_{app_scale}a "+\
                        "--resume {resume} --launch-job --display-results"
     """
+    # Polaris system : Collecting new datasets
     def __init__(self, spec, n_nodes, n_ranks, app_scale, workers, n_records, resume):
         self.overrideSelfAttrs()
     def nodes(self):
@@ -143,7 +245,7 @@ class pretend_subprocess:
             return 0
         else:
             return None
-    def __repr__(self):
+    def __str__(self):
         return f"<Pretend Popen max_polls: {self.max_polls} returncode: {self.returncode} args: {self.command}>"
 
 
@@ -161,6 +263,7 @@ def build():
     prs.add_argument('--max-workers', type=int, default=4, help="Max LibE workers (will be reduced for larger node jobs automatically; default: %(default)s)")
     prs.add_argument('--sleep', type=int, default=60, help="Sleep period (in seconds) before checking to start up more jobs (default: %(default)s)")
     prs.add_argument('--demo', action='store_true', help="Operate in demo mode (only echo jobs commands)")
+    prs.add_argument('--pretend-polls', action='store_true', help="Demo mode pretends to poll jobs a small random number of times rather than just once per job (default: %(default)s)")
     return prs
 
 def parse(args=None, prs=None):
@@ -199,61 +302,64 @@ def parse(args=None, prs=None):
                         workers = 1
                         while workers < args.max_workers and n_nodes * workers < args.max_nodes:
                             workers += 1
-                        args.jobs.append(
-                            LibeJobInfo(line, n_nodes, n_ranks, app_scale, workers, args.n_records, manager_handle)
-                        )
+                        template_job = LibeJobInfo(line, n_nodes, n_ranks, app_scale, workers, args.n_records, manager_handle)
+                        # Need to adjust one prelaunch task here now that we're instantiated
+                        libE_instanced_prelaunch_tasks = []
+                        for task in libE_prelaunch_tasks:
+                            if task is not None:
+                                libE_instanced_prelaunch_tasks.append(task)
+                            else:
+                                libE_instanced_prelaunch_tasks.append(
+                                  PythonEval(func=template_job.mutate_basic_job_string,
+                                             args=(NodeListMaker.modify_job_string, template_job.basic_job_string, libE_dirname),
+                                            )
+                                )
+                        template_job.update_tasks(libE_instanced_prelaunch_tasks,
+                                                  libE_postlaunch_tasks,
+                                                  libE_finalize_tasks)
+                        args.jobs.append(template_job)
                     else:
                         continue
                 else:
                     workers = 1
                     while workers < args.max_workers and int_nodes * workers < args.max_nodes:
                         workers += 1
-                    args.jobs.append(
-                        LibeJobInfo(line, n_nodes, n_ranks, app_scale, workers, args.n_records, manager_handle)
-                    )
+                    template_job = LibeJobInfo(line, n_nodes, n_ranks, app_scale, workers, args.n_records, manager_handle)
+                    # Need to adjust one prelaunch task here now that we're instantiated
+                    libE_instanced_prelaunch_tasks = []
+                    for task in libE_prelaunch_tasks:
+                        if task is not None:
+                            libE_instanced_prelaunch_tasks.append(task)
+                        else:
+                            libE_instanced_prelaunch_tasks.append(
+                              PythonEval(func=template_job.mutate_basic_job_string,
+                                         args=(NodeListMaker.modify_job_string, template_job.basic_job_string, libE_dirname),
+                                        )
+                            )
+                    template_job.update_tasks(libE_instanced_prelaunch_tasks,
+                                              libE_postlaunch_tasks,
+                                              libE_finalize_tasks)
+                    args.jobs.append(template_job)
             print(f"Job description: {line} --> Job: {args.jobs[-1].shortName().rstrip()}")
     return args
 
 def execute_job(job_obj, args):
     print(f"Execute job: {job_obj.specName()}")
     # Pre job
-    if hasattr(job_obj, 'prelaunch'):
-        n_prelaunch = len(job_obj.prelaunch)
-        for idx, cmd in enumerate(job_obj.prelaunch):
-            if type(cmd) is str:
-                command_split = shlex.split(cmd.format(**job_obj.__dict__))
-                print(f"Pre-launch command {idx+1}/{n_prelaunch}: {command_split}")
-                new_sub = subprocess.Popen(command_split)
-                retcode = new_sub.wait()
-                if retcode != 0:
-                    raise ValueError("Command failed")
-            elif isinstance(cmd, PythonEval):
-                print(f"Pre-launch command {idx+1}/{n_prelaunch}: {cmd}")
-                cmd(job_obj)
+    job_obj.prelaunch()
     # Actual job
     command_split = job_obj.format()
     print(f"Launch job: {' '.join(command_split)}")
     if args.demo:
         print("DEMO -- no job launch")
-        new_sub = pretend_subprocess(command_split)
+        new_sub = pretend_subprocess(command_split, None if args.pretend_polls else 1)
     else:
         fout = open("parallel_job.output","w")
         ferr = open("parallel_job.error","w")
         new_sub = subprocess.Popen(command_split, stdout=fout, stderr=ferr)
     # Post launch
-    if hasattr(job_obj, 'postlaunch'):
-        n_postlaunch = len(job_obj.postlaunch)
-        for idx, cmd in enumerate(job_obj.postlaunch):
-            if type(cmd) is str:
-                command_split = shlex.split(cmd.format(**job_obj.__dict__))
-                print(f"Post-launch command {idx+1}/{n_postlaunch}: {command_split}")
-                new_sub = subprocess.Popen(command_split)
-                retcode = new_sub.wait()
-                if retcode != 0:
-                    raise ValueError("Command failed")
-            elif isinstance(cmd, PythonEval):
-                print(f"Post-launch command {idx+1}/{n_postlaunch}: {cmd}")
-                cmd(job_obj)
+    job_obj.postlaunch()
+    # FINALIZE must be called when the process actually returns
     return new_sub
 
 def main(args=None):
@@ -270,6 +376,8 @@ def main(args=None):
         for release in returned:
             print(f"Reclaim job {subprocess_queue[release]['spec']} with {subprocess_queue[release]['nodes']} nodes (return code: {release.returncode})")
             nodes_in_flight -= subprocess_queue[release]['nodes']
+            # Clean up any final operations needed for this job
+            subprocess_queue[release]['job'].finalize()
             del subprocess_queue[release]
         unused_queue = []
         for idx, job in enumerate(args.jobs):
@@ -279,7 +387,7 @@ def main(args=None):
                 unused_queue.append(args.jobs[idx])
                 continue
             new_sub = execute_job(job, args)
-            subprocess_queue[new_sub] = {'spec': job.specName(), 'nodes': job.nodes()}
+            subprocess_queue[new_sub] = {'spec': job.specName(), 'nodes': job.nodes(), 'job': job}
             nodes_in_flight += n_nodes
         args.jobs = unused_queue
         print("Running jobs:")

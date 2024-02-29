@@ -35,6 +35,8 @@ def build():
                        help="Override templates rather than copying to unique name (default: Vary name to prevent multi-job clobbering)")
     files.add_argument("--resume", nargs="*", default=None,
                        help=f"CSV files to treat as prior history without re-evaluating on the system (default: none; only operable for --ens-template={files.get_default('ens_template')})")
+    files.add_argument("--node-list-file", default=None,
+                       help="File with node names to use in the job (default: no hostfile supplied to job)")
     # SEEDS
     seeds = parser.add_argument_group("Seeds", "Arguments that control randomization seeding")
     seeds.add_argument("--seed-configspace", type=int, default=1234,
@@ -49,7 +51,7 @@ def build():
                      help="Execute job script after writing it (default: prepare script only)")
     job.add_argument("--display-results", action='store_true',
                      help="ONLY active when --launch-job supplied; display results when job completes (default: NOT displayed)")
-    #SCALING
+    # SCALING
     scaling = parser.add_argument_group("Scaling", "Arguments that control scale of evaluated tests")
     scaling.add_argument("--mpi-ranks", type=int, default=2,
                         help="Number of MPI ranks each Worker uses (System Scale; default: %(default)s)")
@@ -203,6 +205,8 @@ def parse(prs=None, args=None):
     args.bonus_runtime_args = ""
     if args.resume is not None:
         args.bonus_runtime_args += f" --resume {' '.join(args.resume)}"
+    if args.node_list_file is not None:
+        args.bonus_runtime_args += f" --node-list-file {args.node_list_file}"
     if 'gc' in args.ens_template_export.stem:
         try:
             args.bonus_runtime_args += f" --constraint-sys {args.gc_sys} --constraint-app-x {args.gc_app_x} --constraint-app-y {args.gc_app_y} --constraint-app-z {args.gc_app_z} --input {' '.join(args.gc_input)} --auto-budget={args.gc_auto_budget}"
