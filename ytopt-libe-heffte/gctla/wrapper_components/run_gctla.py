@@ -262,6 +262,9 @@ MACHINE_INFO = {
     'sequence': sequence,
     'topologies': topologies,
 }
+# May have a nodelist to work on rather than the full job's nodelist
+if 'node-list-file' in user_args:
+    MACHINE_INFO['nodelist'] = user_args['node-list-file']
 
 # For efficiency's sake, the condition makes batches of 100 samples at a time
 conditions = [Condition({'mpi_ranks': user_args['constraint-sys'],

@@ -6,6 +6,7 @@ __all__ = ['init_obj', 'myobj']
 import numpy as np
 import os
 import time
+import pathlib
 import itertools
 from . import plopper
 Plopper = plopper.Plopper
@@ -41,31 +42,41 @@ def init_obj(H, persis_info, sim_specs, libE_info):
 def myobj(point: dict, params: list, workerID: int) -> float:
     try:
         machine_info = point.pop('machine_info')
-        # Permit gpu-based mpiexec to isolate to this worker
-        worker_nodefile = None
+
         import os
-        if 'PBS_NODEFILE' in os.environ:
-            worker_nodefile = f"./worker_{workerID}_nodefile"
-            with open(os.environ['PBS_NODEFILE'], 'r') as f:
+        full_nodefile, worker_nodefile = None, None
+        if 'nodelist' in machine_info:
+            full_nodefile = machine_info['nodelist']
+        elif 'PBS_NODEFILE' in os.environ:
+            full_nodefile = os.environ['PBS_NODEFILE']
+
+        # We've been given a set of nodes, ensure a subset is properly passed on to the worker
+        if full_nodefile is not None:
+            with open(full_nodefile, 'r') as f:
                 avail_nodes = [_.rstrip() for _ in f.readlines()]
-            try:
-                with open(worker_nodefile,"r") as f:
+            worker_nodefile = pathlib.Path(f"worker_{workerID}_nodefile")
+            if worker_nodefile.exists():
+                with open(worker_nodefile,'r') as f:
                     worker_nodes = [_.rstrip() for _ in f.readlines()]
                 for node in worker_nodes:
-                    # Raise ValueError if cached node is not in the nodefile list -- trigger recompute
+                    # Should be a tiny amount of busywork, but ensure that ValueError is raised
+                    # if this node would send work to a node that ISN'T in our full nodefile's
+                    # set of available nodes
                     found_index = avail_nodes.index(node)
-            except (FileNotFoundError, ValueError):
-                # If there's an extra node, it's for the generator
+            else:
+                # Check if we have a bonus node provisioned for the generator or not
                 if len(avail_nodes) > 1 and len(avail_nodes) % machine_info['libE_workers'] == 1:
+                    # Generator gets its own node
                     avail_nodes = avail_nodes[1:]
-                # Take contiguous group of nodes for this worker
-                nodes_per_worker = len(avail_nodes) // machine_info['libE_workers']
-                # LibEnsemble workerID's are 1-indexed and the generator is always worker #1
-                # We need to provision zero-indexed but the list should start at 2
-                worker_start = (workerID-2) * nodes_per_worker
-                worker_end = (workerID-1) * nodes_per_worker
-                worker_nodes = avail_nodes[worker_start : worker_end]
-                # Save these nodes to file
+                node_per_worker = len(avail_nodes) // machine_info['libE_workers']
+                # LibEnsemble workerID's are allocated as follows:
+                #   1 - Generator
+                #   2 - Worker #0
+                #   3 - Worker #1
+                #   ...
+                # So we have to adjust the workerID value to get a proper index
+                worker_slice = slice((workerID-2)*nodes_per_worker, (workerID-1)*nodes_per_worker)
+                worker_nodes = avail_nodes[worker_slice]
                 with open(worker_nodefile, "w") as f:
                     f.write("\n".join(worker_nodes)+"\n")
 
@@ -73,16 +84,12 @@ def myobj(point: dict, params: list, workerID: int) -> float:
         # Also customize timeout based on application scale per system
         if 'polaris' in machine_info['identifier']:
             depth_substr = "--depth {depth} --cpu-bind depth --env OMP_NUM_THREADS={depth} "
-            if worker_nodefile is None:
-                machine_format_str = "mpiexec -n {mpi_ranks} --ppn {ranks_per_node} "
-                if 'P8' in params:
-                    machine_format_str += depth_substr
-                machine_format_str += "sh ./set_affinity_gpu_polaris.sh {interimfile}"
-            else:
-                machine_format_str = "mpiexec -n {mpi_ranks} --ppn {ranks_per_node} "
-                if 'P8' in params:
-                    machine_format_str += depth_subtr
-                machine_format_str += "-hostfile "+worker_nodefile+" sh ./set_affinity_gpu_polaris.sh {interimfile}"
+            machine_format_str = "mpiexec -n {mpi_ranks} --ppn {ranks_per_node} "
+            if 'P8' in params:
+                machine_format_str += depth_substr
+            if worker_nodefile is not None:
+                machine_format_str += f"-hostfile {worker_nodefile} "
+            machine_format_str += "sh ./set_affinity_gpu_polaris.sh {interimfile}"
         elif 'theta' in machine_info['identifier']:
             machine_format_str = "aprun -n {mpi_ranks} -N {ranks_per_node} -cc depth -d {depth} -j {j} -e OMP_NUM_THREADS={depth} sh {interimfile}"
         else:
@@ -126,7 +133,7 @@ def myobj(point: dict, params: list, workerID: int) -> float:
         values[8] = f"-ingrid {values[8]}"
         values[9] = f"-outgrid {values[9]}"
         if 'p8' in params:
-            os.environ["OMP_NUM_THREADS"] = str(values[10])
+            os.environ["OMP_NUM_THREADS"] = str(point['p8'])
         params = [i.upper() for i in params]
         results = obj.findRuntime(values, params, workerID,
                                   machine_info['libE_workers'],
