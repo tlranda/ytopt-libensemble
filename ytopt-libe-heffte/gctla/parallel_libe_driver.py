@@ -6,6 +6,7 @@ import time
 import pathlib
 import re
 import argparse
+from math import prod
 
 import pandas as pd, numpy as np
 
@@ -62,6 +63,11 @@ class NodeFileManager():
         self.tags = dict()
         self.limited = False
 
+    def __str__(self):
+        compose = f"{self.__class__.__name__}[{sum(self.allocated)}/{self.n_nodes} Allocated]"
+        compose += "\nTags:\n\t"+"\n\t".join([f"{k}: {v}" for (k,v) in self.tags.items()])
+        return compose
+
     def limit_nodes(self, n_nodes):
         # Since this object does not control what happens to allocated nodes, reject any request
         # that could lead to work returning without the ability to de-allocate its nodes
@@ -94,7 +100,11 @@ class NodeFileManager():
 
     def reserve_nodes(self, n_nodes, tag):
         if type(n_nodes) is str:
-            n_nodes = int(n_nodes)
+            # We may get an expression
+            if 'x' in n_nodes:
+                n_nodes = prod([int(_) for _ in n_nodes.split('x')])
+            else:
+                n_nodes = int(n_nodes)
         # Special case : No nodes are ever reserved
         if self.n_nodes == 0:
             self.tags[tag] = {'file': None, 'indices': []}
@@ -105,10 +115,11 @@ class NodeFileManager():
         allocation = np.nonzero(~self.allocated)[0][:n_nodes]
         self.allocated[allocation] = True
         # Create uniquely named allocation file
-        allocation_name = pathlib.Path("nodelist.txt")
+        # Use .resolve to remove ambiguity when inspecting this data (working directories can change!)
+        allocation_name = pathlib.Path("nodelist.txt").resolve()
         i = 1
         while allocation_name.exists():
-            allocation_name = allocation_name.with_stem(f"nodelist_{i}")
+            allocation_name = allocation_name.with_stem(f"nodelist_{i}").resolve()
             i += 1
         allocation_name.touch()
         with open(allocation_name,'w') as nodefile:
@@ -199,6 +210,7 @@ class JobInfo(SetWhenDefined):
         return str(self.__class__.__name__)+str(other_attrs)
     def specName(self):
         return self.spec
+    @property
     def nodes(self):
         pass
     def process_cmd_queue(self, queue, identifier):
@@ -243,7 +255,7 @@ libE_prelaunch_tasks = ["mkdir -p "+libE_dirname,
                    PythonEval(func=os.chdir,
                               args=(libE_dirname,)),
                    PythonEval(func=NodeListMaker.reserve_nodes,
-                              args=("{n_nodes}", libE_dirname)),
+                              args=("{n_nodes}x{workers}", libE_dirname)),
                    None, # Will be replaced when instantiated
                    "ln -s ../wrapper_components/ wrapper_components",
                    "ln -s ../libEwrapper.py libEwrapper.py",
@@ -277,6 +289,7 @@ class LibeJobInfo(MutableJobInfo):
     # Polaris system : Collecting new datasets
     def __init__(self, spec, n_nodes, n_ranks, app_scale, workers, n_records, resume):
         self.overrideSelfAttrs()
+    @property
     def nodes(self):
         return int(self.n_nodes) * self.workers
 
@@ -284,6 +297,7 @@ class SleepJobInfo(JobInfo):
     basic_job_string = "sleep {duration}"
     def __init__(self, spec, duration):
         self.overrideSelfAttrs()
+    @property
     def nodes(self):
         return self.duration
 
@@ -313,6 +327,7 @@ def build():
     prs.add_argument('--description', type=str, required=True, help="File with newline-delimited paths to forge or expand")
     prs.add_argument('--job-type', choices=['sleep','libE'], default='libE', help="Identify what kinds of jobs are described by --description (default: %(default)s)")
     prs.add_argument('--max-nodes', type=int, default=None, help="Maximum nodes in parallel (required if PBS_NODEFILE is not set, shrinks to contents of PBS_NODEFILE if --max-nodes indicates more nodes than are listed there)")
+    prs.add_argument('--ignore-PBSNODEFILE', action='store_true', help="Disables shrinking job to PBS_NODEFILE's limit (useful for debug; NOT INTENDED FOR NON-DEBUG use) (default: %(default)s)")
     prs.add_argument('--n-records', type=int, required=True, help="Number of records required for each item in description list")
     prs.add_argument('--ranks-per-node', type=int, default=4, help="MPI rank expansion factor (default: %(default)s)")
     prs.add_argument('--max-workers', type=int, default=4, help="Max LibE workers (will be reduced for larger node jobs automatically; default: %(default)s)")
@@ -336,7 +351,7 @@ def parse(args=None, prs=None):
     # Max nodes may be set on the command line, but if PBS_NODEFILE is set in the environment,
     # the node manager will only be capable of allocating those nodes. Therefore, --max-nodes
     # can use any subset (including proper subset) of that many nodes, but cannot exceed it
-    if 'PBS_NODEFILE' in os.environ:
+    if not args.ignore_PBSNODEFILE and 'PBS_NODEFILE' in os.environ:
         with open(os.environ["PBS_NODEFILE"], "r") as f:
             nodefile_nodes = len(f.readlines())
             print(f"PBS_NODEFILE, '{os.environ['PBS_NODEFILE']}' indicates {nodefile_nodes} nodes")
@@ -347,6 +362,15 @@ def parse(args=None, prs=None):
             args.max_nodes = nodefile_nodes
         elif args.max_nodes < nodefile_nodes:
             NodeListMaker.limit_nodes(args.max_nodes)
+    else:
+        # Have to artificially update NodeListMaker or it will reject you on the spot
+        needed_to_add_nodes = args.max_nodes - len(NodeListMaker.node_list)
+        NodeListMaker.node_list = list(NodeListMaker.node_list)
+        for fake_node in range(needed_to_add_nodes):
+            NodeListMaker.node_list.append(f"FAKE_NODE_{fake_node}")
+        NodeListMaker.node_list = np.asarray(NodeListMaker.node_list)
+        NodeListMaker.n_nodes = NodeListMaker.node_list.shape[0]
+        NodeListMaker.allocated = np.full((NodeListMaker.n_nodes), False, dtype=bool)
 
     args.jobs = []
     rejected_info = []
@@ -476,14 +500,14 @@ def main(args=None):
             del subprocess_queue[release]
         unused_queue = []
         for idx, job in enumerate(args.jobs):
-            n_nodes = job.nodes()
+            n_nodes = job.nodes
             if n_nodes + nodes_in_flight > args.max_nodes:
                 if DEBUG_LEVEL > 0:
                     print(f"Job requests {n_nodes} nodes exceed max in flight -- {job.specName()}")
                 unused_queue.append(args.jobs[idx])
                 continue
             new_sub = execute_job(job, args)
-            subprocess_queue[new_sub] = {'spec': job.specName(), 'nodes': job.nodes(), 'job': job}
+            subprocess_queue[new_sub] = {'spec': job.specName(), 'nodes': job.nodes, 'job': job}
             nodes_in_flight += n_nodes
         args.jobs = unused_queue
         if DEBUG_LEVEL > 0:
