@@ -68,7 +68,7 @@ def myobj(point: dict, params: list, workerID: int) -> float:
                 if len(avail_nodes) > 1 and len(avail_nodes) % machine_info['libE_workers'] == 1:
                     # Generator gets its own node
                     avail_nodes = avail_nodes[1:]
-                node_per_worker = len(avail_nodes) // machine_info['libE_workers']
+                nodes_per_worker = len(avail_nodes) // machine_info['libE_workers']
                 # LibEnsemble workerID's are allocated as follows:
                 #   1 - Generator
                 #   2 - Worker #0

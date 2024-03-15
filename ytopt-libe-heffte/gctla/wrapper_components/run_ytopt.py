@@ -89,6 +89,10 @@ if gpu_enabled:
     symlinkable.extend(['gpu_cleanup.sh',
                         'set_affinity_gpu_polaris.sh'])
 libE_specs['sim_dir_symlink_files'] = [pathlib.Path('wrapper_components').joinpath(f) for f in symlinkable]
+if 'node-list-file' in user_args:
+    libE_specs['sim_dir_symlink_files'].append(user_args['node-list-file'])
+    # Remove any relative pathing so the worker utilizes the linked file properly
+    user_args['node-list-file'] = str(pathlib.Path(user_args['node-list-file']).name)
 ENSEMBLE_DIR_PATH = ""
 libE_specs['ensemble_dir_path'] = f'./ensemble_{ENSEMBLE_DIR_PATH}'
 #if you need to manually specify resource information, ie:
