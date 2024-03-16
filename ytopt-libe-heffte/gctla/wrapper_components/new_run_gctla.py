@@ -9,8 +9,9 @@ Execute locally via one of the following commands (e.g. 3 workers):
 The number of concurrent evaluations of the objective function will be 4-1=3.
 """
 
-import os
 import pathlib
+import copy
+import warnings
 import multiprocessing
 multiprocessing.set_start_method('fork', force=True)
 
@@ -32,11 +33,25 @@ from libensemble.tools import parse_args, save_libE_output, add_unique_random_st
 from libensemble import logger
 logger.set_level("DEBUG") # Ensure logs are worth reading
 
-from wrapper_components.ytopt_asktell import persistent_ytopt  # Generator function, communicates with ytopt optimizer
-from wrapper_components.ytopt_obj import init_obj  # Simulator function, calls Plopper
+from GC_TLA.libE_asktell import persistent_model # Generator function, communicates with GC model
+from GC_TLA.libe_obj import init_obj # Simulator function, calls Problem
 
+from GC_TLA.plopper.executor import MetricIDs
 from GC_TLA.implementations.heFFTe.heFFTe_problem import heFFTeArchitecture, heFFTe_instance_factory
-from ytopt.search.optimizer import Optimizer
+
+from sdv.single_table import GaussianCopulaSynthesizer as GaussianCopula
+from sdv.metadata import SingleTableMetadata
+from sdv.sampling.tabular import Condition
+# Mathematics to control auto-budgeting
+try:
+    from math import comb
+except ImportError:
+    from math import factorial
+    def comb(n,k):
+        return factorial(n) / (factorial(k) * factorial(n-k))
+def hypergeo(i,p,t,k):
+    return (comb(i,t)*comb((p-i),(k-t))) / comb(p,k)
+
 
 # SEEDING
 CONFIGSPACE_SEED = 1234
@@ -49,6 +64,9 @@ APP_SCALE_Y = APP_SCALE
 APP_SCALE_Z = APP_SCALE
 MPI_RANKS = None
 MACHINE_IDENTIFIER = None
+
+def boolcast(in_str):
+    return (type(in_str) is str and in_str in ['True','true','t','on','1','Yes','yes','Y','y']) or (type(in_str) is not str and bool(in_str))
 
 def single_listwrap(in_str):
     if type(in_str) is not list:
@@ -82,8 +100,21 @@ def parse_custom_user_args_in(user_args_in):
 
     # Type-fixing for args: (name, REQUIRED, cast_type, default)
     argument_casts = [('max-evals', True, int, None),
-                      ('learner', True, str, None),
-                      ('resume', False, single_listwrap, None),
+                      ('input', True, single_listwrap, None),
+                      ('constraint-sys', True, int, None),
+                      ('constraint-app-x', True, int, None),
+                      ('constraint-app-y', True, int, None),
+                      ('constraint-app-z', True, int, None),
+                      ('ignore', False, single_listwarp, []),
+                      ('auto-budget', False, boolcast, False),
+                      ('initial-quantile', False, float, 0.1),
+                      ('min-quantile', False, float, 0.15),
+                      ('budget-confidence', False, float, 0.95),
+                      ('quantile-reduction', False, float, 0.1),
+                      ('ideal-proportion', False, float, 0.1),
+                      ('ideal-attrition', False, float, 0.05),
+                      ('determine-budget-only', False, boolcast, False),
+                      ('predictions-only', False, boolcast, False),
                       ('node-list-file', False, name_path, None),
                       ]
     req_settings = [tup[0] for tup in argument_casts if tup[1]]
@@ -97,6 +128,138 @@ def parse_custom_user_args_in(user_args_in):
         else:
             user_args[arg_name] = default
     return user_args
+
+def build_model(problem, user_args):
+    # Load data
+    cand_files = [pathlib.Path(_) for _ in user_args['input'] if _ not in user_args['ignore']]
+    found = [_ for _ in cand_files if _.exists()]
+    if len(found) != len(cand_files):
+        missing = set(cand_files).difference(set(found))
+        warnings.warn(f"Input file(s) not found: {missing}", UserWarning)
+    data = pd.concat([pd.read_csv(_) for _ in found]).reset_index(names=["CSV_Order"])
+    # Drop non-SDV cols by only using SDV-OK cols
+    training_cols = [_ for _ in problem.tunable_params] + ['mpi_ranks', 'threads_per_node', 'ranks_per_node', 'FLOPS']
+    # These columns are needed for consistency, but not for SDV learning
+    SDV_NONPREDICT = ['threads_per_node','ranks_per_node','FLOPS']
+    # Drop erroneous configurations
+    least_infinity = min([problem.executor.infinities[_] for _ in MetricIDs if _ != MetricIDs.OK])
+    train_data = data.loc[:, training_cols]
+    train_data = train_data[train_data['FLOPS'] < least_infinity]
+    # Recontextualize topology data
+    topo_split = lambda x: [int(_) for _ in x.split(' ') if _ not in ['-ingrid','-outgrid']]
+    np_topologies = np.asarray([np.fromstring(_, dtype=int, sep=' ') for _ in problem.architecture.mpi_topologies])
+    for topology_key, grid_type in zip(['P6','P7'], ['-ingrid', '-outgrid']):
+        # Grab string as 3-integer topology, downsample with logarithm
+        top_as_np_log = np.log2(np.vstack(train_data[topology_key].apply(topo_split)))
+        # Get max logarithm for each dimension/row
+        log_mpi_ranks = np.stack([np.log2(train_data['mpi_ranks'])]*3, axis=1)
+        # Change proportion of logarithm to new base for transferred topology sizes
+        projection = 2 ** (top_as_np_log / log_mpi_ranks * np.log2(problem.architecture.mpi_ranks))
+        # Use nearest-topology search for best match in new topology space
+        distances = np.asarray([((np_topologies - p) ** 2).sum(axis=1) for p in projection])
+        best_match = np.argmin(distances, axis=1)
+        new_topologies = np_topologies[best_match]
+        # Return to string
+        str_topologies = [" ".join([grid_type]+[str(_) for _ in topo]) for topo in new_topologies]
+        train_data[topology_key] = str_topologies
+    # Recontextualize sequences
+    if 'P8' in problem.tunable_params:
+        dest_seq = np.asarray(problem.architecture.thread_sequence)
+        # Group by value
+        for ((t,r), subframe) in train_data.groupby(['threads_per_node','ranks_per_node']):
+            max_select = t // r
+            cur_vals = subframe['P8']
+            # Reconstruct available sequence at time of this program's execution
+            cur_seq = np.asarray(problem.architecture.make_thread_sequence(t,r))
+            # Project values via ratio length in list
+            projection = (np.asarray([np.argmax((cur_seq == c)) for c in cur_vals]) / len(cur_seq) * len(dest_seq)).round(0).astype(int)
+            train_data.loc[subframe.index, 'P8'] = dest_seq[projection]
+
+    # DATA PREPARED
+    metadata = SingleTableMetadata()
+    metadata.detect_from_dataframe(train_data.drop(columns=SDV_NONPREDICT))
+
+    # Condition will make batches of 100 samples at a time
+    conditions = [Condition({'mpi_ranks': user_args['constraint-sys'],
+                             'P1X': user_args['constraint-app-x'],
+                             'P1Y': user_args['constraint-app-y'],
+                             'P1Z': user_args['constraint-app-z']},
+                            num_rows=100)]
+
+    # Condition for budget calculation
+    mass_conditions = copy.deepcopy(conditions)
+    mass_conditions[0].num_rows = problem.tuning_space_size
+
+    # Fitting process
+    accepted_model = None
+    suggested_budget = None
+    model = GaussianCopula(metadata, enforce_min_max_values=False)
+    model.add_constraints(constraints=problem.constraints)
+    while accepted_model is None:
+        fittable = train_data[train_data['FLOPS'] <= train_data['FLOPS'].qunatile(user_args['initial-quantile'])]
+        fittable = fittable.drop(columns=['FLOPS'])
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            model.fit(fittable)
+        # Quick-exit if not auto-budgeting
+        if not user_args['auto-budget']:
+            accepted_model = model
+            suggested_budget = user_args['max-evals']
+            continue
+        # Check expected budget
+        mass_sample = model.sample_from_conditions(mass_condition)
+        # HyperGeometric arguments
+        total_population = problem.tuning_space_size
+        sample_population = len(mass_sample.drop_duplicates())
+        ideal_samples = int(total_population * user_args['ideal-proportion'])
+        subideal_samples = max(1, ideal_samples - int((total_population-sample_population) * user_args['ideal-attrition']))
+        print(f"Population {total_population} | Sampleable {sample_population} | Ideal {ideal_samples} | Ideal with Attrition {subideal_samples}")
+        if subideal_samples > sample_population:
+            print(f"Autotuning budget indeterminate at quantile {user_args['initial-quantile']}")
+            suggested_budget = user_args['max-evals']
+        else:
+            suggested_budget = 0
+            tightest_budget = min(subideal_samples, user_args['max-evals'])
+            while suggested_budget < tightest_budget:
+                suggested_budget += 1:
+                confidence = sum([hypergeo(subideal_samples, sample_population, _, suggested_budget) for _ in range(1, suggested_budget+1)])
+                # Do not process higher budget with explicitly greater confidence
+                if confidence >= user_ags['budget-confidence']:
+                    print(f"Autotuning budget {suggested_budget} accepted at quantile {user_args['data-quantile']} (confidence: {confidence})")
+                    accepted_model = model
+                    break
+            if confidence < user_args['budget-confidence']:
+                print(f"Autotuning budget at quantile {data_quantile} failed to satisfy confidence {user_args['budget-confidence']}; max confidence: {confidence}")
+        user_args['data-quantile'] -= user_args['quantile-reduction']
+        if user_args['data-quantile'] <= user_args['min-quantile']:
+            print("No autotuning budgets can be satisfied under given constraints")
+            exit()
+    if user_args['determine-budget-only']:
+        exit()
+    return accepted_model, conditions
+
+def remove_generated_duplicates(samples, history, dtypes):
+    default_machine_info = {'sequence': sequence}
+    # Duplicate checking and selection
+    samples.insert(0, 'source', ['sample'] * len(samples))
+    if len(history) > 0:
+        combined = pd.concat((history, samples)).reset_index(drop=False)
+    else:
+        combined = samples.reset_index(drop=False)
+    match_on = list(set(combined.columns).difference(set(['source'])))
+    duplicated = np.where(combined.duplicated(subset=match_on))[0]
+    sample_idx = combined.loc[duplicated]['index']
+    combined = combined.drop(index=duplicated)
+    if len(duplicated) > 0:
+        print(f"Dropping {len(duplicated)} duplicates from generation")
+    else:
+        print("No duplicates to remove")
+    # Extract non-duplicated samples and ensure history is ready for future iterations
+    samples = samples.drop(index=sample_idx)
+    combined['source'] = ['history'] * len(combined)
+    if 'index' in combined.columns:
+        combined = combined.drop(columns=['index'])
+    return samples, combined
 
 def prepare_libE(nworkers, libE_specs, user_args_in):
     num_sim_workers = nworkers - 1  # Subtracting one because one worker will be the generator
@@ -128,73 +291,14 @@ def prepare_libE(nworkers, libE_specs, user_args_in):
     symlinkable = []
     if arch.gpu_enabled:
         symlinkable.extend([pathlib.Path('wrapper_components').joinpath(f) for f in ['gpu_cleanup.sh', 'set_affinity_gpu_polaris.sh']])
-    #if user_args['node-list-file'] is not None:
-    #    symlinkable.append(pathlib.Path(user_args['node-list-file']))
+    if user_args['node-list-file'] is not None:
+        symlinkable.append(pathlib.Path(user_args['node-list-file']))
     libE_specs['sim_dir_symlink_files'] = symlinkable
 
     # Set working directory for this ensemble
     ENSEMBLE_DIR_PATH = ""
     libE_specs['ensemble_dir_path'] = pathlib.Path(f'ensemble_{ENSEMBLE_DIR_PATH}')
     print(f"This ensemble operates from: {libE_specs['ensemble_dir_path']}"+"\n")
-
-    ytoptimizer = Optimizer(
-        num_workers = num_sim_workers,
-        space = problem.tunable_params,
-        learner = user_args['learner'],
-        liar_strategy='cl_max',
-        acq_func='gp_hedge',
-        set_KAPPA=1.96,
-        set_SEED=YTOPT_SEED,
-        set_NI=10,
-        )
-
-    # We may be resuming a previous iteration. LibEnsemble won't let the directory be resumed, so
-    # results will have to be merged AFTER the fact (probably by libEwrapper.py). To support this
-    # behavior, we only interact with the Optimizer here for run_ytopt.py, so only the Optimizer
-    # needs to be lied to in order to simulate the past evaluations
-    if user_args['resume'] is not None:
-        resume_from = [_ for _ in user_args['resume']]
-        print(f"Resuming from records indicated in files: {resume_from}")
-        previous_records = pd.concat([pd.read_csv(_) for _ in resume_from])
-        print(f"Loaded {len(previous_records)} previous evaluations")
-
-        # Form the fake records using optimizer's preferred lie
-        lie = ytoptimizer._get_lie()
-        param_cols = problem.tunable_params.get_hyperparameter_names()
-        result_col = 'FLOPS'
-
-        keylist, resultlist = [], []
-        for idx, row in previous_records.iterrows():
-            # I believe this is sufficient for heFFTe -- however in a conditional search space with
-            # sometimes-deactivated parameters you may need to be more careful.
-            # ytoptimizer.make_key() will help but only if the records indicate nan-values appropriately
-            key = ytoptimizer.make_key(row[param_cols].to_list())
-            if key not in ytoptimizer.evals:
-                # Stage the result of asking for the key
-                ytoptimizer.evals[key] = lie
-                # Prepare lie material and the actual results to tell back
-                keylist.append(key)
-                keydict = dict((k,v) for (k,v) in zip(param_cols, key))
-                result = row[result_col]
-                resultlist.append(tuple([keydict, result]))
-        n_prepared = len(keylist)
-        print(f"Prepared {n_prepared} prior evaluations")
-        # Now that side affects are in place, commit the actual lies
-        # We also guarantee underlying optimizers are forced to fit by setting NI / _n_initial_points = 0
-        # This means that future ask()'s will not be random and will be based on a model fitted to available data
-        ytoptimizer.NI = ytoptimizer._optimizer._n_initial_points = 0
-        ytoptimizer.counter += n_prepared
-        ytoptimizer._optimizer.tell(keylist, [lie] * n_prepared)
-        # Update the lies and trigger underlying optimizer to refit
-        ytoptimizer.tell(resultlist)
-        old_max_evals = user_args['max-evals']
-        user_args['max-evals'] -= n_prepared
-        # When resuming, we never want to actually use ask_initial() so have that function point to ask()
-        def wrap_initial(n_points=1):
-            points = ytoptimizer.ask(n_points=n_points)
-            return list(points)[0]
-        ytoptimizer.ask_initial = wrap_initial
-        print(f"Optimizer updated and ready to resume -- max-evals reduced {old_max_evals} --> {user_args['max-evals']}")
 
     print(f"Identifying machine as {arch.machine_identifier}"+"\n")
     MACHINE_INFO = {
@@ -211,28 +315,9 @@ def prepare_libE(nworkers, libE_specs, user_args_in):
     # May have a nodelist to work on rather than the full job's nodelist
     if user_args['node-list-file'] is not None:
         MACHINE_INFO['nodelist'] = user_args['node-list-file']
-        with open(MACHINE_INFO['nodelist'],'r') as f:
-            avail_nodes = [_.rstrip() for _ in f.readlines()]
-    elif 'PBS_NODEFILE' in os.environ:
-        with open(os.environ['PBS_NODEFILE'],'r') as f:
-            avail_nodes = [_.rstrip() for _ in f.readlines()]
-    else:
-        avail_nodes = None
-    # Prepare the node dictionary once outside of the libensemble directory
-    if avail_nodes is None:
-        worker_nodefile_dictionary = dict((workerID,None) for workerID in range(2,2+num_sim_workers))
-    else:
-        worker_nodefile_dictionary = dict()
-        used_index = len(avail_nodes) % num_sim_workers
-        per_worker = len(avail_nodes) // num_sim_workers
-        for workerID in range(2,2+num_sim_workers):
-            my_nodes = avail_nodes[used_index : used_index+per_worker]
-            used_index += per_worker
-            my_nodefile = pathlib.Path(f"worker_{workerID}_nodefile")
-            with open(my_nodefile,'w') as f:
-                f.write("\n".join(my_nodes))
-            # From ensemble directory, relative path will be up 2 levels
-            worker_nodefile_dictionary[workerID] = pathlib.Path('..').joinpath('..').joinpath(my_nodefile)
+
+    # Model Creation with Budget Calculation
+    model, conditions = build_model(problem, user_args)
 
     # Declare the sim_f to be optimized, and the input/outputs
     sim_specs = {
@@ -250,7 +335,6 @@ def prepare_libE(nworkers, libE_specs, user_args_in):
         'user': {
             'machine_info': MACHINE_INFO,
             'problem': problem,
-            'nodefile_dict': worker_nodefile_dictionary,
         }
     }
 
@@ -270,7 +354,7 @@ def prepare_libE(nworkers, libE_specs, user_args_in):
         'P8': ('P8', int, (1,)),
     }
     gen_specs = {
-        'gen_f': persistent_ytopt,
+        'gen_f': persistent_model,
         'out': [
                 # MUST MATCH ORDER OF THE CONFIGSPACE HYPERPARAMETERS EXACTLY
                 gen_spec_out_lookup[param] for param in problem.tunable_params
@@ -283,7 +367,9 @@ def prepare_libE(nworkers, libE_specs, user_args_in):
                      ['libE_id', 'libE_workers'],
         'user': {
             'machine_info': MACHINE_INFO,
-            'ytoptimizer': ytoptimizer,
+            'model': model, # Provides generations
+            'conditions': conditions,
+            'remove_duplicates': remove_generated_duplicates,
             'num_sim_workers': num_sim_workers,
             'ensemble_dir': libE_specs['ensemble_dir_path'],
         },
@@ -299,6 +385,14 @@ def prepare_libE(nworkers, libE_specs, user_args_in):
 
     # Added as a workaround to issue that's been resolved on develop
     persis_info = add_unique_random_streams({}, nworkers + 1)
+
+    # Sometimes just a dry-run for predictions
+    if user_args['predictions-only']:
+        raw_predictions = model.sample_from_conditions(conditions)
+        cleaned, history = remove_generated_duplicates(raw_predictions, [], gen_specs['out'])
+        libE_specs['ensemble_dir_path'].mkdir(parents=True, exist_ok=True)
+        cleaned.to_csv(libE_specs['ensemble_dir_path'].joinpath('predicted_results.csv'), index=False)
+        exit()
 
     return sim_specs, gen_specs, alloc_specs, libE_specs, exit_criteria, persis_info
 
