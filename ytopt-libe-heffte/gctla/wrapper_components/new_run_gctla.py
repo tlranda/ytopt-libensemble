@@ -9,9 +9,8 @@ Execute locally via one of the following commands (e.g. 3 workers):
 The number of concurrent evaluations of the objective function will be 4-1=3.
 """
 
+import os
 import pathlib
-import copy
-import warnings
 import multiprocessing
 multiprocessing.set_start_method('fork', force=True)
 
@@ -33,12 +32,13 @@ from libensemble.tools import parse_args, save_libE_output, add_unique_random_st
 from libensemble import logger
 logger.set_level("DEBUG") # Ensure logs are worth reading
 
-from GC_TLA.libE_asktell import persistent_model # Generator function, communicates with GC model
-from GC_TLA.libe_obj import init_obj # Simulator function, calls Problem
-
-from GC_TLA.plopper.executor import MetricIDs
 from GC_TLA.implementations.heFFTe.heFFTe_problem import heFFTeArchitecture, heFFTe_instance_factory
 
+import copy
+import warnings
+from wrapper_components.libE_asktell import persistent_model # Generator function, communicates with GC model
+from wrapper_components.libE_objective import heFFTe_objective # Simulator function, calls Problem
+from GC_TLA.plopper.executor import MetricIDs
 from sdv.single_table import GaussianCopulaSynthesizer as GaussianCopula
 from sdv.metadata import SingleTableMetadata
 from sdv.sampling.tabular import Condition

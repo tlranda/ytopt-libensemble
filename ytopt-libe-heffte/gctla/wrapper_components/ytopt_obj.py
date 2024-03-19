@@ -1,5 +1,5 @@
 """
-This module is a wrapper around an example ytopt objective function
+This module is a wrapper around a GC_TLA objective function
 """
 __all__ = ['init_obj']
 

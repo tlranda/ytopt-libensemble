@@ -32,10 +32,10 @@ from libensemble.tools import parse_args, save_libE_output, add_unique_random_st
 from libensemble import logger
 logger.set_level("DEBUG") # Ensure logs are worth reading
 
+from GC_TLA.implementations.heFFTe.heFFTe_problem import heFFTeArchitecture, heFFTe_instance_factory
+
 from wrapper_components.ytopt_asktell import persistent_ytopt  # Generator function, communicates with ytopt optimizer
 from wrapper_components.ytopt_obj import init_obj  # Simulator function, calls Plopper
-
-from GC_TLA.implementations.heFFTe.heFFTe_problem import heFFTeArchitecture, heFFTe_instance_factory
 from ytopt.search.optimizer import Optimizer
 
 # SEEDING
@@ -98,45 +98,7 @@ def parse_custom_user_args_in(user_args_in):
             user_args[arg_name] = default
     return user_args
 
-def prepare_libE(nworkers, libE_specs, user_args_in):
-    num_sim_workers = nworkers - 1  # Subtracting one because one worker will be the generator
-
-    user_args = parse_custom_user_args_in(user_args_in)
-
-    # Building the problem would perform architecture detection for us, but right now the nodes aren't
-    # identified by libEwrapper so we have to out-of-order this
-    arch = heFFTeArchitecture(machine_identifier=MACHINE_IDENTIFIER,
-                              hostfile=user_args['node-list-file'],
-                              x=APP_SCALE_X,
-                              y=APP_SCALE_Y,
-                              z=APP_SCALE_Z)
-    instance_name = f"heFFTe_{arch.nodes}_{APP_SCALE_X}_{APP_SCALE_Y}_{APP_SCALE_Z}"
-    problem = heFFTe_instance_factory.build(instance_name, architecture=arch)
-    # Architecture detected nodes from hostfile; if we don't have enough to perform this job then let's exit NOW
-    expected_nodes = num_sim_workers * (MPI_RANKS // arch.ranks_per_node)
-    assert arch.nodes >= expected_nodes, "Insufficient nodes to perform this job (need: "+\
-           f"(sim_workers={num_sim_workers})x((mpi_ranks={MPI_RANKS})/(ranks_per_node={arch.ranks_per_node})) = {expected_nodes}, "+\
-           f"detected: {arch.nodes})"
-    # Apply seeding
-    problem.tunable_params.seed(CONFIGSPACE_SEED)
-    print(str(problem))
-
-    libE_specs['use_worker_dirs'] = True # Workers operate in unique directories
-    libE_specs['sim_dirs_make'] = False  # Otherwise directories separated by each sim call
-
-    # Copy or symlink needed files into unique directories
-    symlinkable = []
-    if arch.gpu_enabled:
-        symlinkable.extend([pathlib.Path('wrapper_components').joinpath(f) for f in ['gpu_cleanup.sh', 'set_affinity_gpu_polaris.sh']])
-    #if user_args['node-list-file'] is not None:
-    #    symlinkable.append(pathlib.Path(user_args['node-list-file']))
-    libE_specs['sim_dir_symlink_files'] = symlinkable
-
-    # Set working directory for this ensemble
-    ENSEMBLE_DIR_PATH = ""
-    libE_specs['ensemble_dir_path'] = pathlib.Path(f'ensemble_{ENSEMBLE_DIR_PATH}')
-    print(f"This ensemble operates from: {libE_specs['ensemble_dir_path']}"+"\n")
-
+def update_gen_specs(gen_specs, num_sim_workers, problem, MACHINE_INFO, user_args):
     ytoptimizer = Optimizer(
         num_workers = num_sim_workers,
         space = problem.tunable_params,
@@ -196,7 +158,50 @@ def prepare_libE(nworkers, libE_specs, user_args_in):
         ytoptimizer.ask_initial = wrap_initial
         print(f"Optimizer updated and ready to resume -- max-evals reduced {old_max_evals} --> {user_args['max-evals']}")
 
+    # Set values for gen_specs
+    gen_specs['gen_f'] = persistent_ytopt
+    gen_specs['user']['ytoptimizer'] = ytoptimizer
+
+def prepare_libE(nworkers, libE_specs, user_args_in):
+    num_sim_workers = nworkers - 1  # Subtracting one because one worker will be the generator
+
+    user_args = parse_custom_user_args_in(user_args_in)
+
+    # Building the problem would perform architecture detection for us, but right now the nodes aren't
+    # identified by libEwrapper so we have to out-of-order this
+    arch = heFFTeArchitecture(machine_identifier=MACHINE_IDENTIFIER,
+                              hostfile=user_args['node-list-file'],
+                              x=APP_SCALE_X,
+                              y=APP_SCALE_Y,
+                              z=APP_SCALE_Z)
     print(f"Identifying machine as {arch.machine_identifier}"+"\n")
+    instance_name = f"heFFTe_{arch.nodes}_{APP_SCALE_X}_{APP_SCALE_Y}_{APP_SCALE_Z}"
+    problem = heFFTe_instance_factory.build(instance_name, architecture=arch)
+    # Architecture detected nodes from hostfile; if we don't have enough to perform this job then let's exit NOW
+    expected_nodes = num_sim_workers * (MPI_RANKS // arch.ranks_per_node)
+    assert arch.nodes >= expected_nodes, "Insufficient nodes to perform this job (need: "+\
+           f"(sim_workers={num_sim_workers})x((mpi_ranks={MPI_RANKS})/(ranks_per_node={arch.ranks_per_node})) = {expected_nodes}, "+\
+           f"detected: {arch.nodes})"
+    # Apply seeding
+    problem.tunable_params.seed(CONFIGSPACE_SEED)
+    print(str(problem))
+
+    libE_specs['use_worker_dirs'] = True # Workers operate in unique directories
+    libE_specs['sim_dirs_make'] = False  # Otherwise directories separated by each sim call
+
+    # Copy or symlink needed files into unique directories
+    symlinkable = []
+    if arch.gpu_enabled:
+        symlinkable.extend([pathlib.Path('wrapper_components').joinpath(f) for f in ['gpu_cleanup.sh', 'set_affinity_gpu_polaris.sh']])
+    #if user_args['node-list-file'] is not None:
+    #    symlinkable.append(pathlib.Path(user_args['node-list-file']))
+    libE_specs['sim_dir_symlink_files'] = symlinkable
+
+    # Set working directory for this ensemble
+    ENSEMBLE_DIR_PATH = ""
+    libE_specs['ensemble_dir_path'] = pathlib.Path(f'ensemble_{ENSEMBLE_DIR_PATH}')
+    print(f"This ensemble operates from: {libE_specs['ensemble_dir_path']}"+"\n")
+
     MACHINE_INFO = {
         'libE_workers': num_sim_workers,
         'app_timeout': 300,
@@ -240,6 +245,7 @@ def prepare_libE(nworkers, libE_specs, user_args_in):
         'in': [_ for _ in problem.tunable_params],
         'out': [('FLOPS', float, (1,)),
                 ('elapsed_sec', float, (1,)),
+                ('evaluation_sec', float, (1,)),
                 ('machine_identifier','<U30', (1,)),
                 ('mpi_ranks', int, (1,)),
                 ('threads_per_node', int, (1,)),
@@ -270,24 +276,24 @@ def prepare_libE(nworkers, libE_specs, user_args_in):
         'P8': ('P8', int, (1,)),
     }
     gen_specs = {
-        'gen_f': persistent_ytopt,
         'out': [
                 # MUST MATCH ORDER OF THE CONFIGSPACE HYPERPARAMETERS EXACTLY
                 gen_spec_out_lookup[param] for param in problem.tunable_params
                 ],
         'persis_in': sim_specs['in'] +\
-                     ['FLOPS', 'elapsed_sec'] +\
+                     ['FLOPS', 'elapsed_sec', 'evaluation_sec'] +\
                      ['machine_identifier'] +\
                      ['mpi_ranks', 'threads_per_node', 'ranks_per_node'] +\
                      ['gpu_enabled'] +\
                      ['libE_id', 'libE_workers'],
         'user': {
             'machine_info': MACHINE_INFO,
-            'ytoptimizer': ytoptimizer,
             'num_sim_workers': num_sim_workers,
             'ensemble_dir': libE_specs['ensemble_dir_path'],
         },
     }
+    update_gen_specs(gen_specs, num_sim_workers, problem, MACHINE_INFO, user_args)
+    assert 'gen_f' in gen_specs.keys(), "Must set a generator function in update_gen_specs"
 
     alloc_specs = {
         'alloc_f': alloc_f,

@@ -315,6 +315,7 @@ sim_specs = {
     'in': ['p0','p1x','p1y','p1z'] + [f'p{_}' for _ in range(2,9 if c0.value == 'fftw' else 8)] + ['c0'],
     'out': [('FLOPS', float, (1,)),
             ('elapsed_sec', float, (1,)),
+            ('evaluation_sec', float, (1,)),
             ('machine_identifier','<U30', (1,)),
             ('mpi_ranks', int, (1,)),
             ('threads_per_node', int, (1,)),
@@ -345,7 +346,7 @@ gen_specs = {
             ('p7', "<U24", (1,)),
             ],
     'persis_in': sim_specs['in'] +\
-                 ['FLOPS', 'elapsed_sec'] +\
+                 ['FLOPS', 'elapsed_sec', 'evaluation_sec'] +\
                  ['machine_identifier'] +\
                  ['mpi_ranks', 'threads_per_node', 'ranks_per_node'] +\
                  ['gpu_enabled'] +\
