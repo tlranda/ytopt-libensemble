@@ -174,6 +174,7 @@ class libE_base:
         #self.sim_specs['sim_f'] = init_obj
         #self.sim_specs['out'].extend([numpy-dtype tuples of any simulator values to track i.e.: (name, type, shape)])
         #self.sim_specs['user'][WHATEVER_YOU_NEED] = WHATEVER_YOU_WANT
+        pass
 
     def update_gen_specs(self):
         # Set values for gen_specs
@@ -181,6 +182,7 @@ class libE_base:
         #self.gen_specs['gen_f'] = persistent_ytopt
         #self.gen_specs['persis_in'].extend([names of all sim_spec['out'] extensions])
         #self.gen_specs['user'][WHATEVER_YOU_NEED] = WHATEVER_YOU_WANT
+        pass
 
     def set_seeds(self):
         np.random.seed(self.NUMPY_SEED)

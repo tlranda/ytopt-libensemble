@@ -18,7 +18,7 @@ from wrapper_components.run_libE import libE_base, argcasts_dict
 from GC_TLA.implementations.heFFTe.heFFTe_problem import heFFTeArchitecture, heFFTe_instance_factory
 
 from wrapper_components.ytopt_asktell import persistent_ytopt # Generator function, communicates with ytopt optimizer
-from wrapper_components.libe_objective import heFFTe_objective # Simulator function, calls Plopper
+from wrapper_components.libE_objective import heFFTe_objective # Simulator function, calls Plopper
 from ytopt.search.optimizer import Optimizer
 
 class libE_heFFTe(libE_base):
@@ -54,7 +54,7 @@ class libE_heFFTe(libE_base):
     }
 
     # Type-fixing for args: (name, REQUIRED, cast_callable, default_value)
-    argument_cast_extensions = [
+    argument_casts_extensions = [
         ('learner', True, str, None),
         ('resume', False, argcasts_dict['single_listwrap'], None),
     ]

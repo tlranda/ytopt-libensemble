@@ -11,6 +11,7 @@ The number of concurrent evaluations of the objective function will be 4-1=3.
 
 import pathlib
 # Module dependencies from non-default sources
+import numpy as np
 import pandas as pd
 
 from wrapper_components.run_libE import libE_base, argcasts_dict
@@ -32,7 +33,7 @@ def hypergeo(i,p,t,k):
     return (comb(i,t)*comb((p-i),(k-t))) / comb(p,k)
 
 
-from wrapper_components.libE_asktell import persistent_gctla # Generator function, communicates with ytopt optimizer
+from wrapper_components.gctla_asktell import persistent_gctla # Generator function, communicates with ytopt optimizer
 from wrapper_components.libE_objective import heFFTe_objective # Simulator function, calls Plopper
 
 def remove_generated_duplicates(samples, history, dtypes):
@@ -90,22 +91,22 @@ class libE_heFFTe(libE_base):
     }
 
     # Type-fixing for args: (name, REQUIRED, cast_callable, default_value)
-    argument_cast_extensions = [
-        ('input', True, argcast_dict['single_listwrap'], None),
+    argument_casts_extensions = [
+        ('input', True, argcasts_dict['single_listwrap'], None),
         ('constraint-sys', True, int, None),
         ('constraint-app-x', True, int, None),
         ('constraint-app-y', True, int, None),
         ('constraint-app-z', True, int, None),
-        ('ignore', False, argcast_dict['single_listwrap'], []),
-        ('auto-budget', False, argcast_dict['boolcast'], False),
+        ('ignore', False, argcasts_dict['single_listwrap'], []),
+        ('auto-budget', False, argcasts_dict['boolcast'], False),
         ('initial-quantile', False, float, 0.1),
         ('min-quantile', False, float, 0.15),
         ('budget-confidence', False, float, 0.95),
         ('quantile-reduction', False, float, 0.1),
         ('ideal-proportion', False, float, 0.1),
         ('ideal-attrition', False, float, 0.05),
-        ('determine-budget-only', False, argcast_dict['boolcast'], False),
-        ('predictions-only', False, argcast_dict['boolcast'], False),
+        ('determine-budget-only', False, argcasts_dict['boolcast'], False),
+        ('predictions-only', False, argcasts_dict['boolcast'], False),
     ]
 
     def build_model(self):
@@ -121,7 +122,7 @@ class libE_heFFTe(libE_base):
         # These columns are needed for consistency, but not for SDV learning
         SDV_NONPREDICT = ['threads_per_node','ranks_per_node','FLOPS']
         # Drop erroneous configurations
-        least_infinity = min([problem.executor.infinities[_] for _ in MetricIDs if _ != MetricIDs.OK])
+        least_infinity = min([self.problem.executor.infinity[_] for _ in MetricIDs if _ != MetricIDs.OK and _ in self.problem.executor.infinity])
         train_data = data.loc[:, training_cols]
         train_data = train_data[train_data['FLOPS'] < least_infinity]
         # Recontextualize topology data
@@ -201,7 +202,7 @@ class libE_heFFTe(libE_base):
                 suggested_budget = 0
                 tightest_budget = min(subideal_samples, self.user_args['max-evals'])
                 while suggested_budget < tightest_budget:
-                    suggested_budget += 1:
+                    suggested_budget += 1
                     confidence = sum([hypergeo(subideal_samples, sample_population, _, suggested_budget) for _ in range(1, suggested_budget+1)])
                     # Do not process higher budget with explicitly greater confidence
                     if confidence >= self.user_ags['budget-confidence']:
