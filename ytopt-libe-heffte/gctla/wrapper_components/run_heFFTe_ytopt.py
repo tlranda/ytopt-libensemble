@@ -66,7 +66,8 @@ class libE_heFFTe(libE_base):
                                   hostfile=self.user_args['node-list-file'],
                                   x=self.APP_SCALE_X,
                                   y=self.APP_SCALE_Y,
-                                  z=self.APP_SCALE_Z)
+                                  z=self.APP_SCALE_Z,
+                                  workers=self.num_sim_workers)
         print(f"Identifying machine as {arch.machine_identifier}"+"\n")
         instance_name = f"heFFTe_{arch.nodes}_{self.APP_SCALE_X}_{self.APP_SCALE_Y}_{self.APP_SCALE_Z}"
         problem = heFFTe_instance_factory.build(instance_name, architecture=arch)

@@ -265,7 +265,7 @@ libE_finalize_tasks = [PythonEval(func=NodeListMaker.free_nodes, args=(libE_dirn
 class LibeJobInfo(MutableJobInfo):
     basic_job_string = "python3 libEwrapper.py "+\
                         "--system polaris "+\
-                        "--ens-template wrapper_components/new_run_ytopt.py "+\
+                        "--ens-template wrapper_components/run_heFFTe_ytopt.py "+\
                         "--mpi-ranks {n_ranks} "+\
                         "--gpu-override 4 --gpu-enabled "+\
                         "--application-x {app_scale[0]} --application-y {app_scale[1]} --application-z {app_scale[2]} "+\
