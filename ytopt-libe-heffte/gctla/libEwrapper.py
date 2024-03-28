@@ -86,11 +86,11 @@ def build():
     gc.add_argument("--gc-app", type=int, default=None,
                     help="Default FFT dimension scale for unspecified --gc-app-[xyz] arguments (default: Defers to --application-scale)")
     gc.add_argument("--gc-app-x", type=int, default=None,
-                    help="GC's target FFT size in the X-dimension (default: --gc-app value)")
+                    help="GC's target FFT size in the X-dimension (default: --application-x value)")
     gc.add_argument("--gc-app-y", type=int, default=None,
-                    help="GC's target FFT size in the Y-dimension (default: --gc-app value)")
+                    help="GC's target FFT size in the Y-dimension (default: --application-y value)")
     gc.add_argument("--gc-app-z", type=int, default=None,
-                    help="GC's target FFT size in the Z-dimension (default: --gc-app value)")
+                    help="GC's target FFT size in the Z-dimension (default: --application-z value)")
     gc.add_argument("--gc-input", nargs="+", default=None,
                     help="Inputs to provide to the GC (no default; must be specified!)")
     gc.add_argument("--gc-ignore", nargs="*", default=None,
@@ -188,11 +188,11 @@ def parse(prs=None, args=None):
         args.gc_app = args.application_scale
     # Then each dimension based on FFT default unless explicitly specified
     if args.gc_app_x is None:
-        args.gc_app_x = args.gc_app
+        args.gc_app_x = args.application_x
     if args.gc_app_y is None:
-        args.gc_app_y = args.gc_app
+        args.gc_app_y = args.application_y
     if args.gc_app_z is None:
-        args.gc_app_z = args.gc_app
+        args.gc_app_z = args.application_z
     if type(args.gc_input) is str:
         args.gc_input = [args.gc_input]
     # Argparse is bad and doesn't put nargs>=1 into lists by default
