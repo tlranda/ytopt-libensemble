@@ -10,6 +10,8 @@ The number of concurrent evaluations of the objective function will be 4-1=3.
 """
 
 import pathlib
+import copy
+import warnings
 # Module dependencies from non-default sources
 import numpy as np
 import pandas as pd
@@ -175,10 +177,13 @@ class libE_heFFTe(libE_base):
         accepted_model = None
         suggested_budget = None
         model = GaussianCopula(metadata, enforce_min_max_values=False)
-        model.add_constraints(constraints=problem.constraints)
+        constraints = [_.to_dict() for _ in self.problem.constraints]
+        for constraint in constraints:
+            constraint.update({'constraint_class': 'ScalarRange'})
+        model.add_constraints(constraints=constraints)
         while accepted_model is None:
-            fittable = train_data[train_data['FLOPS'] <= train_data['FLOPS'].qunatile(self.user_args['initial-quantile'])]
-            fittable = fittable.drop(columns=['FLOPS'])
+            fittable = train_data[train_data['FLOPS'] <= train_data['FLOPS'].quantile(self.user_args['initial-quantile'])]
+            fittable = fittable.drop(columns=SDV_NONPREDICT)
             with warnings.catch_warnings():
                 warnings.simplefilter('ignore')
                 model.fit(fittable)
@@ -233,9 +238,11 @@ class libE_heFFTe(libE_base):
         problem = heFFTe_instance_factory.build(instance_name, architecture=arch)
         # Architecture detected nodes from hostfile; if we don't have enough to perform this job then let's exit NOW
         expected_nodes = self.num_sim_workers * (self.MPI_RANKS // arch.ranks_per_node)
+        """
         assert arch.nodes >= expected_nodes, "Insufficient nodes to perform this job (need: "+\
                f"(sim_workers={self.num_sim_workers})x((mpi_ranks={self.MPI_RANKS})/(ranks_per_node={arch.ranks_per_node})) = {expected_nodes}, "+\
                f"detected: {arch.nodes})"
+        """
         self.problem = problem
         print(str(self.problem))
 
@@ -267,7 +274,7 @@ class libE_heFFTe(libE_base):
     def update_gen_specs(self):
         # Set values for gen_specs
         # Expected attributes to be available/needed: self.{gen_specs,num_sim_workers,nworkers,problem,MACHINE_INFO,user_args}
-        self.gen_specs['gen_f'] = persistent_ytopt
+        self.gen_specs['gen_f'] = persistent_gctla
         self.gen_specs['persis_in'].extend(['gpu_enabled','FLOPS'])
         self.gen_specs['user'].update({
             'model': self.model,
@@ -277,7 +284,7 @@ class libE_heFFTe(libE_base):
 
     def prepare_libE(self):
         super().prepare_libE()
-        if self.user_args['predictions_only']:
+        if self.user_args['predictions-only']:
             raw_predictions = self.model.sample_from_conditions(self.conditions)
             cleaned, history = remove_generated_duplicates(raw_predictions, [], self.gen_specs['out'])
             self.libE_specs['ensemble_dir_path'].mkdir(parents=True, exist_ok=True)
