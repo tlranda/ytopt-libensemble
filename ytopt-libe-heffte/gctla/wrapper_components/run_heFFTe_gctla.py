@@ -39,20 +39,27 @@ from wrapper_components.gctla_asktell import persistent_gctla # Generator functi
 from wrapper_components.libE_objective import heFFTe_objective # Simulator function, calls Plopper
 
 def remove_generated_duplicates(samples, history, dtypes):
+    # Samples themselves may have duplicates
+    duplicated = sum(samples.duplicated())
+    samples = samples.drop_duplicates().reset_index(drop=True)
+    if duplicated > 0:
+        print(f"Dropping {duplicated} duplicates from sample set")
+    else:
+        print("No duplicates to remove within samples")
     # Duplicate checking and selection
     samples.insert(0, 'source', ['sample'] * len(samples))
     if len(history) > 0:
         combined = pd.concat((history, samples)).reset_index(drop=False)
     else:
         combined = samples.reset_index(drop=False)
-    match_on = list(set(combined.columns).difference(set(['source'])))
+    match_on = list(set(combined.columns).difference(set(['source','index'])))
     duplicated = np.where(combined.duplicated(subset=match_on))[0]
     sample_idx = combined.loc[duplicated]['index']
     combined = combined.drop(index=duplicated)
     if len(duplicated) > 0:
-        print(f"Dropping {len(duplicated)} duplicates from generation")
+        print(f"Dropping {len(duplicated)} duplicates from generation (previously evaluated)")
     else:
-        print("No duplicates to remove")
+        print("No duplicates to remove due to history")
     # Extract non-duplicated samples and ensure history is ready for future iterations
     samples = samples.drop(index=sample_idx)
     combined['source'] = ['history'] * len(combined)
@@ -291,9 +298,91 @@ class libE_heFFTe(libE_base):
             cleaned.to_csv(self.libE_specs['ensemble_dir_path'].joinpath('predicted_results.csv'), index=False)
             exit()
 
+    def debug_run(self):
+        import time
+        module_time = time.time()
+        # Emulate the process of gen_f -> sim_f
+        gen_user_specs = self.gen_specs['user']
+        n_sim = gen_user_specs['num_sim_workers']
+        model = gen_user_specs['model']
+        samples, sample_history = [], []
+        sample_generation_identifier = 0
+        H_o = np.zeros(n_sim, dtype=self.gen_specs['out'])
+        filled = 0
+        first_write = True
+        while filled < n_sim:
+            while len(samples) == 0:
+                samples = model.sample_from_conditions(gen_user_specs['conditions'])
+                if 'remove_duplicates' in gen_user_specs and gen_user_specs['remove_duplicates'] is not None:
+                    samples, sample_history = gen_user_specs['remove_duplicates'](samples, sample_history, self.gen_specs['out'])
+                samples.to_csv(f"GC_TLA_Samples_{sample_generation_identifier}.csv", index=False)
+                sample_generation_identifier += 1
+            # Use available samples
+            utilized = []
+            for idx in samples.index[:n_sim]:
+                utilized.append(idx)
+                for(key, value) in samples.loc[idx].items():
+                    try:
+                        H_o[filled][key] = value
+                    except ValueError:
+                        pass
+                filled += 1
+            samples = samples.drop(index=utilized)
+        print(f"[libE - generator 1] creates points: {H_o}")
+
+        # Use simulator to evaluate
+        point = {}
+        for field in self.sim_specs['in']:
+            point[field] = np.squeeze(H_o[field])
+        calc_in = np.zeros(len(self.sim_specs['out']), dtype=self.sim_specs['out'])
+        calc_in['libE_id'] = [2]
+        machine_info = self.sim_specs['user']['machine_info']
+        calc_in['machine_identifier'] = [machine_info['identifier']]
+        calc_in['mpi_ranks'] = [machine_info['mpi_ranks']]
+        calc_in['threads_per_node'] = [machine_info['threads_per_node']]
+        calc_in['ranks_per_node'] = [machine_info['ranks_per_node']]
+        calc_in['gpu_enabled'] = [machine_info['gpu_enabled']]
+        calc_in['libE_workers'] = [machine_info['libE_workers']]
+        # Deepcoping this object seems to alleviate some load-balancing / possible GIL issues?
+        problem = copy.deepcopy(self.sim_specs['user']['problem'])
+        nodefile = self.sim_specs['user']['nodefile_dict'][2]
+        worker_output_dir = pathlib.Path('.').joinpath('tmp_files').resolve()
+        timeout = self.sim_specs['user']['machine_info']['app_timeout']
+        print(f"[libE simulator - 2] submits point: {point}")
+        evaluation_time = time.time()
+        y = problem.evaluateConfiguration(point, nodefile=nodefile, output_dir=worker_output_dir, timeout=timeout)
+        end_time = time.time()
+        print(f"[libE simulator - 2] receives objective for point: {point} -> {y}")
+        calc_in['FLOPS'] = y
+        calc_in['elapsed_sec'] = end_time - module_time
+        calc_in['evaluation_sec'] = end_time - evaluation_time
+
+        # Return to generator for logging
+        if calc_in is not None:
+            if len(calc_in):
+                b = []
+                with open(f'persistent_H.npz','wb') as npf:
+                    np.save(npf, calc_in)
+                for field_name, entry in zip(self.gen_specs['persis_in'], calc_in[0]):
+                    try:
+                        b += [str(entry[0])]
+                    except Exception as e:
+                        from inspect import currentframe
+                        print(f"Field '{field_name}' with vlaue '{entry}' produced exception {e.__class__} during persistent output in {__file__}:{currentframe().f_back.f_lineno}")
+                        b += [str(entry)]
+                if first_write:
+                    with open('results.csv','w') as f:
+                        f.write(','.join(calc_in.dtype.names)+"\n")
+                        first_write = False
+                with open('results.csv','a') as f:
+                    f.write(','.join(b)+"\n")
 
 if __name__ == '__main__':
+    DEBUG = False
     # Parse comms, default options from commandline, then execute
-    libE_heFFTe().run()
-
+    runner = libE_heFFTe()
+    if DEBUG:
+        runner.debug_run()
+    else:
+        runner.run()
 

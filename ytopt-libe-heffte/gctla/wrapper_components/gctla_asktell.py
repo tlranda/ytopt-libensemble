@@ -24,7 +24,7 @@ def persistent_gctla(H, persis_info, gen_specs, libE_info):
     # Send batches until manager sends stop tag
     while tag not in [STOP_TAG, PERSIS_STOP]:
         # Hand off information
-        H_o = np.zeros(n_sim+1, dtype=gen_specs['out'])
+        H_o = np.zeros(n_sim, dtype=gen_specs['out'])
         filled = 0
         while filled < n_sim:
             # Replenish samples from the model as needed

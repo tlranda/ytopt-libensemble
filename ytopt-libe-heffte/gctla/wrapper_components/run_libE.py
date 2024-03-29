@@ -288,6 +288,9 @@ class libE_base:
                 np.save(np_save_H, H)
             self.manager_save(H)
 
+    def debug_run(self):
+        pass
+
 if __name__ == '__main__':
     # Parse comms, default options from commandline, then execute
     libE_heFFTe().run()
