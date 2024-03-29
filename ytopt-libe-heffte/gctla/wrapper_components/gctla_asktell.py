@@ -46,6 +46,8 @@ def persistent_gctla(H, persis_info, gen_specs, libE_info):
                         # mpi_ranks (would be KeyError but ndarrays raise ValueError instead)
                         pass
                 filled += 1
+                if filled >= n_sim:
+                    break
             samples = samples.drop(index=utilized)
         print(f"[libE - generator {libE_info['workerID']}] creates points: {H_o}")
         # This returns the requested points to the libE manager, which will

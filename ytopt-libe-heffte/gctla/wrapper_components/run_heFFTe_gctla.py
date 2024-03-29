@@ -382,6 +382,8 @@ if __name__ == '__main__':
     # Parse comms, default options from commandline, then execute
     runner = libE_heFFTe()
     if DEBUG:
+        import pdb
+        pdb.set_trace()
         runner.debug_run()
     else:
         runner.run()
