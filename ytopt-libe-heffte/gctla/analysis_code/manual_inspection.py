@@ -11,6 +11,7 @@ from sdv.constraints import ScalarRange
 import argparse
 
 compare_cols = ['p0']+[f'p1{d}' for d in 'xyz']+[f'p{_}' for _ in range(2,10)]
+display_cols = ['p9']
 
 def make_dist(value_dict, data):
     # Use value dictionary to get distribution histogram for this dataset
@@ -234,8 +235,9 @@ def main(args=None):
     tpn_lookup = (0,'threads_per_node')
     rpn_lookup = (0,'ranks_per_node')
     mpi_lookup = (0,'mpi_ranks')
-    gt_seq = sequence_builder(ground_truth.loc[tpn_lookup],
-                              ground_truth.loc[rpn_lookup])
+    gt_seq = range(1,32)
+    #sequence_builder(ground_truth.loc[tpn_lookup],
+    #                          ground_truth.loc[rpn_lookup])
     def_topo, gt_topo = minSurfaceSplit(args.problem_x,
                                         args.problem_y,
                                         args.problem_z,
@@ -251,11 +253,11 @@ def main(args=None):
                   'p1x': fft_dim_scales,
                   'p1y': fft_dim_scales,
                   'p1z': fft_dim_scales,
-                  'p2': ['-no-reorder','-reorder',' '],
-                  'p3': ['-a2a','-a2av',' '],
-                  'p4': ['-p2p','-p2p_pl',' '],
-                  'p5': ['-pencils','-slabs',' '],
-                  'p6': ['-r2c_dir 0','-r2c_dir 1','-r2c_dir 2',' '],
+                  'p2': ['-no-reorder','-reorder'],
+                  'p3': ['-a2a','-a2av'],
+                  'p4': ['-p2p','-p2p_pl'],
+                  'p5': ['-pencils','-slabs'],
+                  'p6': ['-r2c_dir 0','-r2c_dir 1','-r2c_dir 2'],
                   'p7': gt_topo,
                   'p8': gt_topo,
                   'p9': gt_seq,
@@ -286,8 +288,8 @@ def main(args=None):
         sub_dists.append(make_dist(value_dict, by_source))
         source_names.append(str(pathlib.Path(source_name).parent.stem))
     # Compare
-    kl_div = np.zeros((len(compare_cols), 4))
-    for idx, col in enumerate(compare_cols):
+    kl_div = np.zeros((len(display_cols), 4))
+    for idx, col in enumerate(display_cols):
         for subidx, (name, a_dist, b_dist) in enumerate(zip(['TL vs Truth', 'TL vs Best', 'CS vs Truth', 'CS vs Best'],
                                                          [tl_dist, tl_dist, cond_dist, cond_dist],
                                                          [true_dist, best_dist, true_dist, best_dist])):
