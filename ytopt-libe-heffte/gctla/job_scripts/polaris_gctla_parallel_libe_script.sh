@@ -10,9 +10,9 @@
 #  25-99  |   medium   |   6 hours
 # 100-496 |    large   |  24 hours
 
-source /home/trandall/polaris_knight_env.sh;
+source /home/trandall/polaris_2024_env.sh;
 module list;
 cd /home/trandall/ytune_23/tlranda-ytopt-libensemble/ytopt-libe-heffte/gctla;
 #python3 parallel_libe_driver.py --description gctla_weak_scaling_job.txt --max-nodes 256 --n-records 100 --sleep 1 --max-workers 4 --demo;
-python3 parallel_libe_driver.py --description gctla_weak_scaling_job.txt --max-nodes 256 --n-records 100 --sleep 60 --max-workers 4;
+python3 parallel_libe_driver.py --description gctla_2d_job.txt --max-nodes 256 --n-records 100 --sleep 60 --max-workers 4;
 
